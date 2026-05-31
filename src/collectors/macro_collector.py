@@ -27,18 +27,28 @@ def collect_macro_data() -> dict[str, pd.DataFrame]:
     api_key = cfg.get("fred_api_key", "")
     results = {}
 
+    from ..utils import provenance
+
     if not api_key or api_key == "YOUR_FRED_API_KEY_HERE":
         print("[WARN] FRED API Key未配置，使用模拟宏观数据")
         results = _generate_mock_macro()
         _save_macro(results)
+        provenance.record("macro", provenance.MOCK, _count_rows(results), "FRED Key 未配置")
         return results
 
     try:
         from fredapi import Fred
         fred = Fred(api_key=api_key)
         series_cfg = cfg.get("fred_series", {})
-        start_date = (datetime.now() - timedelta(days=365 * 5)).strftime("%Y-%m-%d")
+        if not series_cfg:
+            # 配置缺失会导致一条都拉不到 → 明确降级而非静默返回空
+            print("[WARN] settings.yaml 缺少 fred_series，无法采集真实宏观数据，改用模拟")
+            results = _generate_mock_macro()
+            _save_macro(results)
+            provenance.record("macro", provenance.MOCK, _count_rows(results), "缺少 fred_series 配置")
+            return results
 
+        start_date = (datetime.now() - timedelta(days=365 * 5)).strftime("%Y-%m-%d")
         for key, series_id in series_cfg.items():
             try:
                 data = fred.get_series(series_id, observation_start=start_date)
@@ -51,12 +61,25 @@ def collect_macro_data() -> dict[str, pd.DataFrame]:
             except Exception as e:
                 print(f"[WARN] {series_id} 获取失败: {e}")
 
+        if results:
+            _save_macro(results)
+            provenance.record("macro", provenance.REAL, _count_rows(results), "FRED API")
+        else:
+            results = _generate_mock_macro()
+            _save_macro(results)
+            provenance.record("macro", provenance.MOCK, _count_rows(results), "FRED 全部序列获取失败")
+        return results
+
     except ImportError:
         print("[WARN] fredapi未安装，使用模拟数据")
         results = _generate_mock_macro()
+        _save_macro(results)
+        provenance.record("macro", provenance.MOCK, _count_rows(results), "fredapi 未安装")
+        return results
 
-    _save_macro(results)
-    return results
+
+def _count_rows(results: dict) -> int:
+    return sum(len(df) for df in results.values())
 
 
 def _save_macro(results: dict):

@@ -17,7 +17,11 @@ def collect_market_data() -> dict[str, pd.DataFrame]:
     for item in cfg.get("sector_etfs", []):
         all_symbols.append(item)
 
+    from ..utils import provenance
+
     results = {}
+    mode = provenance.REAL
+    detail = "yfinance"
     try:
         import yfinance as yf
         start = (datetime.now() - timedelta(days=365 * 3)).strftime("%Y-%m-%d")
@@ -45,8 +49,15 @@ def collect_market_data() -> dict[str, pd.DataFrame]:
     except ImportError:
         print("[WARN] yfinance未安装，使用模拟市场数据")
         results = _generate_mock_market(all_symbols)
+        mode, detail = provenance.MOCK, "yfinance 未安装"
+
+    # 真实路径下若一条都没取到（网络异常），也降级标记为模拟
+    if mode == provenance.REAL and not results:
+        results = _generate_mock_market(all_symbols)
+        mode, detail = provenance.MOCK, "yfinance 全部获取失败"
 
     _save_market(results)
+    provenance.record("market", mode, sum(len(df) for df in results.values()), detail)
     return results
 
 

@@ -98,6 +98,24 @@ def init_database():
         updated_at TEXT DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS collection_meta (
+        source TEXT PRIMARY KEY,
+        mode TEXT,
+        rows INTEGER DEFAULT 0,
+        detail TEXT,
+        updated_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS valuation_data (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        metric TEXT NOT NULL,
+        date TEXT NOT NULL,
+        value REAL,
+        source TEXT,
+        updated_at TEXT DEFAULT (datetime('now')),
+        UNIQUE(metric, date)
+    );
+
     CREATE TABLE IF NOT EXISTS market_signals (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         date TEXT NOT NULL UNIQUE,

@@ -1,6 +1,11 @@
 """
 走向前回测引擎 (Walk-Forward Backtest)
 无前视偏差：每个调仓日仅使用截至该日的历史数据
+
+⚠️ 幸存者偏差说明：基金池来自当前仍在运作的核心QDII列表，已清盘/合并/改名
+的基金未纳入。因此回测结果对“当年可选基金”是乐观估计——真实历史中部分被
+本回测选中的基金在早期可能尚未成立，未被选中的失败基金也已消失。解读时应把
+策略表现视为上界而非可复现收益。结果中的 survivorship_note 字段同步披露此点。
 """
 import pandas as pd
 import numpy as np
@@ -45,6 +50,7 @@ def run_backtest(
     market_db  = read_table("market_data")
     macro_db   = read_table("macro_data")
     fund_list  = read_table("fund_list")
+    cape_hist  = _load_cape_history()   # 真实 CAPE 历史（如已采集），按日期升序的 Series
 
     if fund_nav.empty:
         return {"error": "无基金净值数据，请先运行 python run.py"}
@@ -84,8 +90,11 @@ def run_backtest(
         mac_snap = macro_db[macro_db["date"] <= t0] if not macro_db.empty else pd.DataFrame()
         sp500_snap = sp500_full[sp500_full.index <= t0]
 
+        # 真实 CAPE 截至 t0 的快照（无前视）
+        cape_snap = cape_hist[cape_hist.index <= t0] if cape_hist is not None and not cape_hist.empty else None
+
         # 生成市场信号
-        signal = _compute_signal(sp500_snap, mkt_snap, mac_snap, cfg)
+        signal = _compute_signal(sp500_snap, mkt_snap, mac_snap, cfg, cape_snap)
 
         # 评分并选基金
         scored = _score_funds(nav_snap, fund_list, signal, cfg)
@@ -143,7 +152,20 @@ def run_backtest(
         "end_date":      rebalance_dates[-1].strftime("%Y-%m-%d"),
         "n_periods":     len(df),
         "fund_list":     fund_list,
+        "data_source":   _backtest_data_source(),
+        "survivorship_note": (
+            f"基金池为当前在运作的 {len(fund_list)} 只核心QDII，未含已清盘/改名基金；"
+            "策略收益为乐观上界，非可复现实盘收益。"
+        ),
     }
+
+
+def _backtest_data_source() -> str:
+    try:
+        from ..utils import provenance
+        return provenance.overall_mode()
+    except Exception:
+        return "unknown"
 
 
 # ─────────────────────────────────────────────
@@ -151,31 +173,28 @@ def run_backtest(
 # ─────────────────────────────────────────────
 
 def _compute_signal(sp500_snap: pd.Series, mkt_snap: pd.DataFrame,
-                    mac_snap: pd.DataFrame, cfg: dict) -> dict:
+                    mac_snap: pd.DataFrame, cfg: dict,
+                    cape_snap: pd.Series = None) -> dict:
     """
     用截止日期快照重算市场信号（与 signals.py 逻辑严格对应）。
-    改进：相对CAPE分位数 + 美联储方向 + 趋势滤波器
-    权重：宏观20% + 估值25% + 逆向情绪20% + 趋势35%
+    估值优先用真实 CAPE 历史（cape_snap，截至 t0，无前视）；缺失时回退点位近似。
+    权重：宏观20% + 估值20% + 逆向情绪15% + 趋势30% + 信用15%（独立因子）
     """
     # SP500 最新价 & VIX
     sp500_price = float(sp500_snap.iloc[-1]) if not sp500_snap.empty else 5000.0
     vix_df = mkt_snap[mkt_snap["symbol"] == "^VIX"].sort_values("date")
     vix = float(vix_df.iloc[-1]["close"]) if not vix_df.empty else 18.0
 
-    # 估算 CAPE
-    cape = float(np.clip(30.0 + (sp500_price - 5000) / 1000 * 3.0, 12, 50))
-
-    # ① 估值评分：CAPE 历史分位数（固定1990后参考分布 + 滚动数据混合）
-    P25, P50, P75, P90 = 21.0, 26.0, 31.0, 36.0
-    if len(sp500_snap) >= 120:
-        hist_capes = np.clip(
-            30.0 + (sp500_snap.values - 5000) / 1000 * 3.0, 12, 50
-        )
-        rp25, rp50, rp75, rp90 = np.percentile(hist_capes, [25, 50, 75, 90])
-        P25 = (P25 + rp25) / 2
-        P50 = (P50 + rp50) / 2
-        P75 = (P75 + rp75) / 2
-        P90 = (P90 + rp90) / 2
+    # ① 估值评分：真实 CAPE 历史分位数优先，否则点位近似 + 固定参考分布
+    if cape_snap is not None and len(cape_snap) >= 1:
+        cape = float(cape_snap.iloc[-1])
+        if len(cape_snap) >= 60:
+            P25, P50, P75, P90 = np.percentile(cape_snap.values.astype(float), [25, 50, 75, 90])
+        else:
+            P25, P50, P75, P90 = 21.0, 26.0, 31.0, 36.0
+    else:
+        cape = float(np.clip(30.0 + (sp500_price - 5000) / 1000 * 3.0, 12, 50))
+        P25, P50, P75, P90 = 21.0, 26.0, 31.0, 36.0
 
     if   cape >= P90: val_score = 1
     elif cape >= P75: val_score = 3
@@ -200,9 +219,12 @@ def _compute_signal(sp500_snap: pd.Series, mkt_snap: pd.DataFrame,
     # ⑤ 趋势滤波器：当前价格 vs 12个月均线
     trend = _trend_from_snap(sp500_snap)
 
-    # 新权重：宏观20% + 估值25% + 逆向情绪20% + 趋势35%
-    raw = (macro_adj * 0.20 + val_score * 0.25
-           + contrarian * 0.20 + trend * 0.35)
+    # ⑥ 信用利差（独立因子）
+    credit = _credit_from_snap(mac_snap)
+
+    # 去相关权重：宏观20% + 估值20% + 逆向情绪15% + 趋势30% + 信用15%
+    raw = (macro_adj * 0.20 + val_score * 0.20
+           + contrarian * 0.15 + trend * 0.30 + credit * 0.15)
 
     if   raw >= 7.0: sig = "重仓进取"; c, s, ca = 0.70, 0.25, 0.05
     elif raw >= 5.0: sig = "标配稳健"; c, s, ca = 0.60, 0.30, 0.10
@@ -258,6 +280,21 @@ def _fed_direction_from_snap(mac: pd.DataFrame) -> float:
     if   delta < -0.25: return +1.5
     elif delta >  0.25: return -1.5
     else:               return  0.0
+
+
+def _credit_from_snap(mac: pd.DataFrame) -> float:
+    """信用利差评分（与 signals._credit_score 同口径）。"""
+    if mac.empty:
+        return 5.0
+    sub = mac[mac["series_id"] == "BAMLH0A0HYM2"].sort_values("date")
+    if sub.empty:
+        return 5.0
+    spread = float(sub.iloc[-1]["value"])
+    if   spread < 3.0: return 8.0
+    elif spread < 4.0: return 6.5
+    elif spread < 5.5: return 5.0
+    elif spread < 8.0: return 3.5
+    else:              return 2.0
 
 
 def _trend_from_snap(sp500_snap: pd.Series) -> float:
@@ -391,6 +428,19 @@ def _index_period_return(price_series: pd.Series, t0: pd.Timestamp,
     if p0.empty or p1.empty:
         return 0.0
     return float(p1.iloc[-1] / p0.iloc[-1] - 1)
+
+
+def _load_cape_history() -> pd.Series:
+    """真实 CAPE 历史序列（来自 valuation_data，按日期升序）。无则返回空 Series。"""
+    try:
+        df = read_table("valuation_data", "metric = ? ORDER BY date", ("cape",))
+    except Exception:
+        return pd.Series(dtype=float)
+    if df is None or df.empty:
+        return pd.Series(dtype=float)
+    s = df.copy()
+    s["date"] = pd.to_datetime(s["date"])
+    return s.set_index("date")["value"].astype(float).sort_index()
 
 
 def _fetch_sp500_full(market_db: pd.DataFrame) -> pd.Series:

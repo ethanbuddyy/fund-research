@@ -10,6 +10,24 @@ from ..utils.config import load_config
 from ..analyzers.masters import graham, buffett, bogle, siegel, lynch
 
 
+def _credit_score() -> float:
+    """
+    信用利差评分（独立于股价的风险因子）：高收益债期权调整利差 BAMLH0A0HYM2。
+    利差走阔=信用风险上升=利空权益；利差收窄=风险偏好高=利好。
+    这是为降低“综合信号几乎全由标普价格驱动”而引入的独立维度。
+    <3.0% → 8（信用宽松）; 3-4 → 6.5; 4-5.5 → 5; 5.5-8 → 3.5; >8 → 2（信用紧张）
+    """
+    df = read_table("macro_data", "series_id = ? ORDER BY date DESC LIMIT 1", ("BAMLH0A0HYM2",))
+    if df.empty:
+        return 5.0  # 无数据时中性
+    spread = float(df.iloc[0]["value"])
+    if   spread < 3.0: return 8.0
+    elif spread < 4.0: return 6.5
+    elif spread < 5.5: return 5.0
+    elif spread < 8.0: return 3.5
+    else:              return 2.0
+
+
 def _trend_score() -> float:
     """
     SP500 价格趋势评分：当前价格 vs 12个月（252日）移动均线。
@@ -47,17 +65,21 @@ def generate_market_signal(save: bool = True) -> dict:
     valuation_score  = valuation.get("valuation_score", 5)
     sentiment_score  = sentiment.get("score", 50) / 10         # 0-100 → 0-10
     contrarian       = 10 - sentiment_score                    # 逆向情绪
-    trend_score      = _trend_score()                          # 新增：价格趋势
+    trend_score      = _trend_score()                          # 价格趋势
+    credit_score     = _credit_score()                         # 新增：独立信用利差因子
 
     # 宏观分叠加利率方向修正（上限10，下限1）
     macro_adj = float(np.clip(macro_score + fed_direction, 1, 10))
 
-    # 新权重：宏观20% + 估值25% + 逆向情绪20% + 趋势35%
+    # 去相关后的权重：宏观20% + 估值20% + 逆向情绪15% + 趋势30% + 信用15%。
+    # 估值现为真实CAPE（不再是价格的线性函数），叠加独立的信用因子，
+    # 把“纯标普价格/波动”驱动占比从约80%降到约45%。
     composite_raw = (
-        macro_adj       * 0.20
-        + valuation_score * 0.25
-        + contrarian      * 0.20
-        + trend_score     * 0.35
+        macro_adj         * 0.20
+        + valuation_score * 0.20
+        + contrarian      * 0.15
+        + trend_score     * 0.30
+        + credit_score    * 0.15
     )
 
     # 综合信号（阈值基于新权重重新校准：分数中枢约5.0）
@@ -100,8 +122,13 @@ def generate_market_signal(save: bool = True) -> dict:
         + siegel_analysis["score"]
     ) / 5
 
+    from ..utils import provenance
+    data_source = provenance.overall_mode()
+
     signal = {
         "date": datetime.now().strftime("%Y-%m-%d"),
+        "data_source": data_source,                 # real / partial / mock
+        "data_quality": provenance.read_all(),
         "macro_cycle": macro.get("cycle"),
         "valuation_level": valuation.get("valuation_level"),
         "sentiment_label": sentiment.get("label"),
@@ -117,6 +144,7 @@ def generate_market_signal(save: bool = True) -> dict:
         "cash_allocation": cash_alloc,
         "timing_score": composite_raw,
         "trend_score": round(trend_score, 2),
+        "credit_score": round(credit_score, 2),
         "fed_direction": fed_direction,
         "macro_adj": round(macro_adj, 2),
         "macro": macro,
@@ -160,6 +188,7 @@ def _save_signal(signal: dict):
         "core_allocation": signal["core_allocation"],
         "satellite_allocation": signal["satellite_allocation"],
         "cash_allocation": signal["cash_allocation"],
+        "notes": f"data_source={signal.get('data_source', 'unknown')}",
     }
     df = pd.DataFrame([row])
     upsert_dataframe(df, "market_signals", ["date"])

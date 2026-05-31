@@ -12,6 +12,7 @@ _LIST_CSV = _DATA_DIR / "fund_list_seed.csv"
 
 
 def collect_fund_data() -> tuple[list, dict]:
+    from ..utils import provenance
     fund_list = []
     nav_history = {}
 
@@ -22,28 +23,38 @@ def collect_fund_data() -> tuple[list, dict]:
         nav_history = _collect_nav_history(ak, [f["fund_code"] for f in fund_list[:20]])
         _save_fund_list(fund_list)
         _save_nav_history(nav_history)
+        nav_rows = sum(len(v) for v in nav_history.values())
+        if nav_rows > 0:
+            provenance.record("fund", provenance.REAL, nav_rows, "akshare")
+        else:
+            provenance.record("fund", provenance.MOCK, 0, "akshare 无净值历史")
         return fund_list, nav_history
     except ImportError:
         print("[WARN] akshare未安装，尝试CSV种子数据")
     except Exception as e:
         print(f"[WARN] akshare异常: {e}，尝试CSV种子数据")
 
-    # 2) 尝试本地CSV种子
+    # 2) 本地CSV种子（真实历史净值）
     fund_list, nav_history = _load_from_csv_seed()
-    if fund_list:
-        print(f"[OK] CSV种子加载: {len(fund_list)} 只基金，{sum(len(v) for v in nav_history.values())} 条净值记录")
-        # 尝试用yfinance补充近期数据（静默失败）
+    nav_rows = sum(len(v) for v in nav_history.values())
+    if nav_rows > 0:
+        print(f"[OK] CSV种子加载: {len(fund_list)} 只基金，{nav_rows} 条净值记录")
         nav_history = _patch_recent_via_yfinance(fund_list, nav_history)
         _save_fund_list(fund_list)
         _save_nav_history(nav_history)
+        provenance.record("fund", provenance.REAL, sum(len(v) for v in nav_history.values()),
+                          "CSV种子+yfinance补全")
         return fund_list, nav_history
 
     # 3) 兜底：随机模拟（数据无效，仅供界面展示）
-    print("[WARN] 未找到CSV种子，使用随机模拟数据（运行 tools/download_seed_data.py 获取真实数据）")
-    fund_list = _build_core_list()
+    print("[WARN] 未找到CSV种子净值，使用随机模拟数据（运行 tools/download_seed_data.py 获取真实数据）")
+    if not fund_list:
+        fund_list = _build_core_list()
     nav_history = _generate_mock_nav(fund_list)
     _save_fund_list(fund_list)
     _save_nav_history(nav_history)
+    provenance.record("fund", provenance.MOCK, sum(len(v) for v in nav_history.values()),
+                      "无CSV种子，随机模拟")
     return fund_list, nav_history
 
 
@@ -200,7 +211,12 @@ _QDII_TO_ETF = {
 
 
 def _patch_recent_via_yfinance(fund_list: list, nav_history: dict) -> dict:
-    """用yfinance补充CSV种子结束日期之后的近期净值（静默失败）"""
+    """用yfinance补充CSV种子结束日期之后的近期净值（静默失败）。
+
+    重要：QDII 净值以人民币计价，美国ETF代理以美元计价，必须用 USD/CNY 汇率
+    换算到人民币口径后再拼接，否则忽略汇率敞口会污染净值。汇率不可得时
+    宁可跳过拼接，也不拼接错误数据。
+    """
     try:
         import yfinance as yf
     except ImportError:
@@ -208,19 +224,22 @@ def _patch_recent_via_yfinance(fund_list: list, nav_history: dict) -> dict:
 
     today_str = datetime.now().strftime("%Y-%m-%d")
 
+    # 先取 USD/CNY 汇率序列（覆盖全部待补区间）；取不到则放弃拼接，避免污染
+    fx = _fetch_usdcny(yf)
+    if fx is None or fx.empty:
+        print("[yfinance] 无法获取USD/CNY汇率，跳过净值拼接（避免引入汇率误差）")
+        return nav_history
+
     for fund in fund_list:
         code = str(fund["fund_code"])
         ticker = _QDII_TO_ETF.get(code)
         if not ticker:
             continue
 
-        # 确认CSV数据结束日期
         existing = nav_history.get(code)
-        if existing is not None and not existing.empty:
-            last_date = existing["date"].max()
-        else:
+        if existing is None or existing.empty:
             continue
-
+        last_date = existing["date"].max()
         if last_date >= today_str:
             continue
 
@@ -232,21 +251,49 @@ def _patch_recent_via_yfinance(fund_list: list, nav_history: dict) -> dict:
 
             df = df[["Close"]].reset_index()
             df.columns = ["date", "close"]
-            df["date"] = df["date"].dt.strftime("%Y-%m-%d")
+            df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
 
-            # 将收盘价换算为相对净值（接续CSV最后一条）
+            # 用当日汇率把美元价换算为人民币口径（按日期对齐，缺失日向前填充）
+            df["fx"] = df["date"].map(fx.to_dict())
+            df["fx"] = df["fx"].ffill().bfill()
+            df = df.dropna(subset=["fx"])
+            if df.empty:
+                continue
+            df["close_cny"] = df["close"] * df["fx"]
+
+            # 接续CSV最后一条净值（以人民币口径缩放）
             last_nav = float(existing.iloc[-1]["nav"])
-            last_close = df["close"].iloc[0]
-            scale = last_nav / last_close
-            df["nav"] = (df["close"] * scale).round(4)
+            base = float(df["close_cny"].iloc[0])
+            if base <= 0:
+                continue
+            scale = last_nav / base
+            df["nav"] = (df["close_cny"] * scale).round(4)
             df["acc_nav"] = df["nav"]
-            df["daily_return"] = df["close"].pct_change() * 100
+            df["daily_return"] = df["close_cny"].pct_change() * 100
             df["fund_code"] = code
             df = df[["fund_code", "date", "nav", "acc_nav", "daily_return"]].dropna(subset=["nav"])
 
             nav_history[code] = pd.concat([existing, df], ignore_index=True).drop_duplicates("date")
-            print(f"[yfinance] {code} 补充近期数据 {len(df)} 条（{start} ~ {today_str}）")
+            print(f"[yfinance] {code} 补充近期数据 {len(df)} 条（汇率换算，{start} ~ {today_str}）")
         except Exception:
             pass  # 网络失败时保留原有CSV数据
 
     return nav_history
+
+
+def _fetch_usdcny(yf) -> "pd.Series | None":
+    """获取 USD/CNY 日汇率，返回 {date_str: rate} 的 Series；失败返回 None。"""
+    try:
+        fx = yf.download("CNY=X", period="6mo", progress=False, auto_adjust=True)
+        if fx is None or fx.empty:
+            return None
+        close = fx["Close"]
+        # yfinance 可能返回 MultiIndex 列
+        if hasattr(close, "columns"):
+            close = close.iloc[:, 0]
+        s = close.reset_index()
+        s.columns = ["date", "rate"]
+        s["date"] = pd.to_datetime(s["date"]).dt.strftime("%Y-%m-%d")
+        return s.set_index("date")["rate"].astype(float)
+    except Exception:
+        return None

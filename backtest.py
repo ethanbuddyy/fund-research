@@ -61,6 +61,13 @@ def run(args):
 
     print(f"\n  回测区间：{result['start_date']} ～ {result['end_date']}  ({result['n_periods']} 个调仓周期)")
 
+    # 数据真实性 + 幸存者偏差披露（解读结论前必须知晓）
+    ds = result.get("data_source", "unknown")
+    ds_label = {"real": "✅ 真实数据", "partial": "⚠️ 部分真实/近似", "mock": "❌ 含模拟数据(仅演示)"}.get(ds, ds)
+    print(f"  数据来源：{ds_label}")
+    if result.get("survivorship_note"):
+        print(f"  ⚠️ 幸存者偏差：{result['survivorship_note']}")
+
     # ── 1. 绩效对比 ──────────────────────────────
     print_section("一、绩效对比")
     header = f"  {'指标':12s}  {'本策略':>10s}  {'标普500':>10s}  {'60/40':>10s}"

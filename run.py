@@ -27,6 +27,9 @@ def fetch_data():
     from src.collectors.fund_collector import collect_fund_data
     collect_fund_data()
 
+    from src.collectors.valuation_collector import collect_valuation_data
+    collect_valuation_data()
+
     from src.analyzers.fund_analyzer import analyze_all_funds
     analyze_all_funds()
 
@@ -34,6 +37,10 @@ def fetch_data():
     from src.recommender.scorer import score_all_funds
     signal = generate_market_signal()
     score_all_funds(signal)
+
+    from src.utils import provenance
+    print()
+    print(provenance.banner())
 
     print(f"\n[信号] 综合市场信号：{signal.get('composite_signal', '—')}")
     print(f"  经济周期：{signal.get('macro_cycle', '—')}")

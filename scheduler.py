@@ -53,6 +53,10 @@ def run_daily_update():
         collect_fund_data()
         logger.info("[3/5] 基金数据更新完成")
 
+        from src.collectors.valuation_collector import collect_valuation_data
+        collect_valuation_data()
+        logger.info("[3.5/5] 真实估值数据更新完成")
+
         from src.analyzers.fund_analyzer import analyze_all_funds
         analyze_all_funds()
         logger.info("[4/5] 基金绩效分析完成")
