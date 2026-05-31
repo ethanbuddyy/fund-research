@@ -8,18 +8,25 @@ def analyze_macro_cycle() -> dict:
     """判断当前经济周期阶段并返回分析结果"""
     gdp_df = read_table("macro_data", "series_id = ? ORDER BY date DESC LIMIT 5", ("GDPC1",))
     cpi_df = read_table("macro_data", "series_id = ? ORDER BY date DESC LIMIT 12", ("CPIAUCSL",))
+    pce_df = read_table("macro_data", "series_id = ? ORDER BY date DESC LIMIT 13", ("PCEPILFE",))
     rate_df = read_table("macro_data", "series_id = ? ORDER BY date DESC LIMIT 12", ("FEDFUNDS",))
     unemploy_df = read_table("macro_data", "series_id = ? ORDER BY date DESC LIMIT 12", ("UNRATE",))
     treasury_10y = read_table("macro_data", "series_id = ? ORDER BY date DESC LIMIT 12", ("GS10",))
     treasury_2y = read_table("macro_data", "series_id = ? ORDER BY date DESC LIMIT 12", ("GS2",))
+    curve_df = read_table("macro_data", "series_id = ? ORDER BY date DESC LIMIT 1", ("T10Y2Y",))
 
     gdp_growth = _calc_yoy(gdp_df)
-    inflation = _calc_yoy(cpi_df)
+    # 通胀优先用核心PCE（美联储真正盯的指标），无则回退CPI
+    pce_yoy = _calc_yoy(pce_df)
+    inflation = pce_yoy if pce_yoy is not None else _calc_yoy(cpi_df)
+    inflation_gauge = "核心PCE" if pce_yoy is not None else "CPI"
     fed_rate = _get_latest(rate_df)
     unemployment = _get_latest(unemploy_df)
     yield_10y = _get_latest(treasury_10y)
     yield_2y = _get_latest(treasury_2y)
-    yield_curve = (yield_10y or 4.2) - (yield_2y or 4.8)  # 正值=正常，负值=倒挂
+    # 期限利差优先用真实 T10Y2Y 日频序列，无则用 GS10-GS2 近似
+    real_curve = _get_latest(curve_df)
+    yield_curve = real_curve if real_curve is not None else (yield_10y or 4.2) - (yield_2y or 4.8)
 
     # 经济周期判断（四阶段模型）
     cycle = _determine_cycle(gdp_growth, inflation, fed_rate, unemployment, yield_curve)
@@ -46,6 +53,7 @@ def analyze_macro_cycle() -> dict:
         "cycle_description": cycle["description"],
         "gdp_growth": round(gdp_growth, 2) if gdp_growth else None,
         "inflation": round(inflation, 2) if inflation else None,
+        "inflation_gauge": inflation_gauge,
         "fed_rate": round(fed_rate, 2) if fed_rate else None,
         "unemployment": round(unemployment, 2) if unemployment else None,
         "yield_curve": round(yield_curve, 2),

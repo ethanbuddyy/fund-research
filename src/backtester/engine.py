@@ -253,7 +253,9 @@ def _macro_score_from_snap(mac: pd.DataFrame) -> float:
         return (float(sub.iloc[-1]["value"]) / float(sub.iloc[-n]["value"]) - 1) * 100
 
     g     = yoy("GDPC1", 5)
-    inf   = yoy("CPIAUCSL", 12)
+    inf   = yoy("PCEPILFE", 13)        # 优先核心PCE
+    if inf is None:
+        inf = yoy("CPIAUCSL", 12)      # 回退CPI
     rate  = latest("FEDFUNDS")
     unemp = latest("UNRATE")
 

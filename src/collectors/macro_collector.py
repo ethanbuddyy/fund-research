@@ -9,9 +9,11 @@ SERIES_NAMES = {
     "GDPC1": "实际GDP（链式美元，季度）",
     "CPIAUCSL": "CPI（城市消费者）",
     "CPILFESL": "核心CPI（剔除食品能源）",
+    "PCEPILFE": "核心PCE物价指数",
     "FEDFUNDS": "联邦基金利率",
     "GS10": "10年期国债收益率",
     "GS2": "2年期国债收益率",
+    "T10Y2Y": "10年-2年期限利差",
     "UNRATE": "失业率",
     "BAMLH0A0HYM2": "高收益债期权调整利差",
     "WILL5000INDFC": "威尔希尔5000全市值指数",
@@ -119,6 +121,12 @@ def _generate_mock_macro() -> dict:
             values = (310 + np.cumsum(np.random.randn(60) * 0.3)).tolist()
         elif series_id == "CPILFESL":
             values = (320 + np.cumsum(np.random.randn(60) * 0.2)).tolist()
+        elif series_id == "PCEPILFE":
+            # 核心PCE物价指数，约2.5%年化温和上行
+            values = (120 * (1 + np.cumsum(np.full(60, 0.025 / 12)))).tolist()
+        elif series_id == "T10Y2Y":
+            # 10年-2年利差，常态小幅正、偶有倒挂
+            values = (0.2 + np.random.randn(60) * 0.25).tolist()
         elif series_id == "GDPC1":
             # 实际GDP（季度，约2%年增长），用累积温和增长模拟同比 ~2%
             values = (22000 * (1 + np.cumsum(np.full(60, 0.02 / 12)))).tolist()
