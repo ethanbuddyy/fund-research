@@ -1,7 +1,6 @@
-"""一键启动入口：初始化数据库 → 拉取数据 → 启动仪表盘"""
+"""一键启动入口：初始化数据库 → 拉取数据"""
 import sys
 import os
-import subprocess
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -43,30 +42,6 @@ def fetch_data():
     return signal
 
 
-def launch_dashboard():
-    dashboard_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard", "app.py")
-    print(f"\n[仪表盘] 启动 Streamlit，请在浏览器打开 → http://localhost:8501")
-    print("按 Ctrl+C 停止服务\n")
-    subprocess.run([
-        sys.executable, "-m", "streamlit", "run", dashboard_path,
-        "--server.port", "8501",
-        "--server.headless", "true",   # WSL 下禁止自动弹出浏览器
-        "--server.address", "0.0.0.0", # 允许 Windows 宿主机通过 localhost 访问
-        "--browser.gatherUsageStats", "false",
-    ])
-
-
 if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser(description="基金投资私人幕僚系统")
-    parser.add_argument("--skip-fetch", action="store_true", help="跳过数据采集，直接启动仪表盘")
-    parser.add_argument("--fetch-only", action="store_true", help="仅更新数据，不启动仪表盘")
-    args = parser.parse_args()
-
     init()
-
-    if not args.skip_fetch:
-        fetch_data()
-
-    if not args.fetch_only:
-        launch_dashboard()
+    fetch_data()
