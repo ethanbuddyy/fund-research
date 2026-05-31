@@ -106,6 +106,20 @@ def init_database():
         updated_at TEXT DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS fund_holdings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        fund_code TEXT NOT NULL,
+        date TEXT NOT NULL,
+        stock_ratio REAL,
+        bond_ratio REAL,
+        cash_ratio REAL,
+        stock_codes TEXT,
+        managers TEXT,
+        source TEXT,
+        updated_at TEXT DEFAULT (datetime('now')),
+        UNIQUE(fund_code, date)
+    );
+
     CREATE TABLE IF NOT EXISTS global_macro (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         region TEXT NOT NULL,

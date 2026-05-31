@@ -57,6 +57,10 @@ def run_daily_update():
         collect_fund_data()
         logger.info("[3/5] 基金数据更新完成")
 
+        from src.collectors.eastmoney_collector import collect_eastmoney
+        collect_eastmoney()
+        logger.info("[3.2/5] 天天基金真实净值/持仓富集完成")
+
         from src.collectors.valuation_collector import collect_valuation_data
         collect_valuation_data()
         logger.info("[3.5/5] 真实估值数据更新完成")

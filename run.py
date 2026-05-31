@@ -30,6 +30,10 @@ def fetch_data():
     from src.collectors.fund_collector import collect_fund_data
     collect_fund_data()
 
+    # 用天天基金 pingzhongdata 富集真实净值与持仓（覆盖 akshare/模拟净值）
+    from src.collectors.eastmoney_collector import collect_eastmoney
+    collect_eastmoney()
+
     from src.collectors.valuation_collector import collect_valuation_data
     collect_valuation_data()
 
