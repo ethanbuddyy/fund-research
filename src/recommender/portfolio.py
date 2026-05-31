@@ -49,10 +49,13 @@ def _select_core_funds(df: pd.DataFrame, alloc: float) -> list:
     if core.empty:
         core = df[df["fund_type"].str.contains("ETF|指数|被动", na=False)]
 
+    picks = core.head(3)
+    n = len(picks)
+    if n == 0:
+        return []
+    weight = alloc / n  # 在选中的基金间等权分配，确保权重之和 = alloc
     selected = []
-    remaining = alloc
-    for _, row in core.head(3).iterrows():
-        weight = remaining / min(3, len(core))
+    for _, row in picks.iterrows():
         selected.append({
             "fund_code": row["fund_code"],
             "fund_name": row.get("fund_name", row["fund_code"]),

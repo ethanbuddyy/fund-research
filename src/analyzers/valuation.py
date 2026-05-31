@@ -9,7 +9,7 @@ def calculate_valuation_metrics() -> dict:
     # 读取全量SP500历史（用于分位数估算）
     sp500_df = read_table("market_data", "symbol = ? ORDER BY date", ("^GSPC",))
     treasury_df = read_table("macro_data", "series_id = ? ORDER BY date DESC LIMIT 12", ("GS10",))
-    gdp_df = read_table("macro_data", "series_id = ? ORDER BY date DESC LIMIT 8", ("GDP",))
+    gdp_df = read_table("macro_data", "series_id = ? ORDER BY date DESC LIMIT 8", ("GDPC1",))
 
     cape = _estimate_cape(sp500_df)
     sp500_pe = _estimate_pe(sp500_df)

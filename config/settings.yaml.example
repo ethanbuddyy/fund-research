@@ -1,10 +1,78 @@
-# 复制本文件为 settings.yaml 并填入真实 API Key
-# cp config/settings.yaml.example config/settings.yaml
+# 复制本文件为 settings.yaml 并填入真实 API Key：
+#   cp config/settings.yaml.example config/settings.yaml
+# 结构性配置（指数、权重、阈值）不是机密，可直接使用本默认值。
 
-# FRED API Key（宏观数据）
-# 免费申请：https://fred.stlouisfed.org/docs/api/api_key.html
-# 留空则使用模拟数据
+# ── API Key ────────────────────────────────────────────
+# FRED API Key（美国宏观+巴菲特指标）。免费申请：
+# https://fred.stlouisfed.org/docs/api/api_key.html
+# 留空或保留占位符 → 自动降级为模拟数据（会在输出中明确标记）
 fred_api_key: "YOUR_FRED_API_KEY_HERE"
 
 # SQLite 数据库路径（相对于项目根目录）
 db_path: "data/fund_research.db"
+
+# ── FRED 宏观序列（key 任意，值必须是真实 FRED series id）──
+# 注意：GDPC1 = 实际GDP（剔除通胀），用于经济周期判断；
+#       名义GDP(GDP) 会把通胀算进增长，导致周期判断系统性偏“扩张”。
+fred_series:
+  real_gdp: "GDPC1"          # 实际GDP（季度，链式美元）
+  cpi: "CPIAUCSL"            # CPI 城市消费者
+  core_cpi: "CPILFESL"       # 核心CPI
+  fed_funds: "FEDFUNDS"      # 联邦基金利率
+  treasury_10y: "GS10"       # 10年期国债收益率
+  treasury_2y: "GS2"         # 2年期国债收益率
+  unemployment: "UNRATE"     # 失业率
+  hy_credit_spread: "BAMLH0A0HYM2"  # 高收益债期权调整利差（独立风险因子）
+  wilshire5000: "WILL5000INDFC"     # 威尔希尔5000全市值指数（巴菲特指标分子）
+
+# ── 市场指数（yfinance symbol，无需 API Key）────────────
+market_indices:
+  us:
+    - {symbol: "^GSPC", name: "标普500"}
+    - {symbol: "^IXIC", name: "纳斯达克综指"}
+    - {symbol: "^DJI",  name: "道琼斯工业"}
+  global:
+    - {symbol: "^N225",  name: "日经225"}
+    - {symbol: "^GDAXI", name: "德国DAX"}
+    - {symbol: "^FTSE",  name: "英国富时100"}
+    - {symbol: "^HSI",   name: "恒生指数"}
+  volatility:
+    - {symbol: "^VIX", name: "VIX恐慌指数"}
+  commodities:
+    - {symbol: "GC=F", name: "黄金期货"}
+    - {symbol: "CL=F", name: "WTI原油"}
+
+# ── 行业板块 ETF（彼得林奇板块轮动）─────────────────────
+sector_etfs:
+  - {symbol: "XLK", name: "科技"}
+  - {symbol: "XLV", name: "医疗"}
+  - {symbol: "XLE", name: "能源"}
+  - {symbol: "XLF", name: "金融"}
+  - {symbol: "XLY", name: "可选消费"}
+  - {symbol: "XLP", name: "必需消费"}
+  - {symbol: "XLI", name: "工业"}
+
+# ── 基金综合评分权重（合计 = 1.0）──────────────────────
+scoring_weights:
+  performance: 0.25      # 历史绩效（年化收益）
+  risk_adjusted: 0.20    # 风险调整（夏普/回撤/波动）
+  strategy_match: 0.20   # 与当前市场信号的策略匹配
+  market_timing: 0.20    # 择时（综合信号分）
+  cost_efficiency: 0.15  # 成本（费率）
+
+# ── 大师策略阈值 ───────────────────────────────────────
+strategy_params:
+  graham:
+    cape_overvalued: 30.0    # CAPE 高估线
+    cape_undervalued: 15.0   # CAPE 低估线
+    pe_overvalued: 25.0      # P/E 高估线
+  buffett:
+    buffett_indicator_high: 1.2   # 总市值/GDP 偏高线
+    buffett_indicator_low: 0.8    # 偏低线
+    vix_fear: 30                  # VIX 恐惧阈值（逆向买入）
+    vix_greed: 15                 # VIX 贪婪阈值
+  bogle:
+    max_expense_ratio: 0.015      # 可接受最高费率
+    preferred_expense_ratio: 0.005  # 偏好费率
+  siegel:
+    equity_risk_premium_threshold: 3.0  # 股权风险溢价阈值(%)

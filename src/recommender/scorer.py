@@ -63,14 +63,24 @@ def score_all_funds(market_signal: dict) -> pd.DataFrame:
     return pd.DataFrame()
 
 
+def _annualize(cum_return_pct: float, years: float) -> float:
+    """把区间累计收益(%)换算成年化收益(%)，统一打分口径。"""
+    growth = 1 + cum_return_pct / 100.0
+    if growth <= 0:        # 极端亏损保护，避免负数开方
+        return -100.0
+    return (growth ** (1.0 / years) - 1) * 100.0
+
+
 def _calc_performance_score(row) -> float:
+    # 全部换算为“年化收益”后对统一的 20%/年 目标打分，避免 3年累计与1年混用同一标尺
     weighted_sum = 0.0
     total_weight = 0.0
-    for col, weight in [("return_1y", 0.4), ("return_3y", 0.35), ("return_6m", 0.25)]:
+    ANNUAL_TARGET = 20.0
+    for col, years, weight in [("return_1y", 1.0, 0.4), ("return_3y", 3.0, 0.35), ("return_6m", 0.5, 0.25)]:
         val = row.get(col)
         if pd.notna(val) and val is not None:
-            target = 20 if "1y" in col or "3y" in col else 10
-            s = min(10, max(0, (float(val) / target) * 10))
+            ann = _annualize(float(val), years)
+            s = min(10, max(0, (ann / ANNUAL_TARGET) * 10))
             weighted_sum += s * weight
             total_weight += weight
     return weighted_sum / total_weight if total_weight > 0 else 5.0
@@ -92,36 +102,16 @@ def _calc_risk_score(row) -> float:
 
 
 def _calc_strategy_score(row, market_signal: dict) -> float:
-    fund_type = str(row.get("fund_type", ""))
-    fund_name = str(row.get("fund_name", ""))
+    """按资产类别（结构化字段，非名字关键词）与当前信号匹配打分。"""
+    from ..utils.fund_universe import classify_asset_class, strategy_match_score
     composite = market_signal.get("composite_signal", "标配稳健")
-
-    # 在进取信号下，成长型ETF加分
-    is_growth = any(kw in fund_name for kw in ["纳斯达克", "科技", "100"])
-    is_index = any(kw in fund_type for kw in ["ETF", "指数"]) or "500" in fund_name
-    is_active = "主动" in fund_type
-
-    if composite == "重仓进取":
-        if is_growth:
-            return 9.0
-        elif is_index:
-            return 7.5
-        else:
-            return 6.0
-    elif composite == "标配稳健":
-        if is_index:
-            return 8.0
-        elif is_growth:
-            return 7.0
-        else:
-            return 6.5
-    else:  # 减仓防守
-        if is_index:
-            return 7.0
-        elif is_active:
-            return 5.0
-        else:
-            return 6.0
+    asset_class = classify_asset_class(
+        fund_code=str(row.get("fund_code", "")),
+        fund_type=str(row.get("fund_type", "")),
+        fund_name=str(row.get("fund_name", "")),
+        benchmark=str(row.get("benchmark", "")),
+    )
+    return strategy_match_score(asset_class, composite)
 
 
 def _calc_cost_score(row, cfg: dict) -> float:

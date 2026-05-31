@@ -13,40 +13,13 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from src.utils.fund_universe import CORE_QDII_FUNDS  # 单一事实来源（含真实费率）
+
 DATA_DIR = Path(__file__).parent.parent / "data"
 DATA_DIR.mkdir(exist_ok=True)
 
 NAV_CSV = DATA_DIR / "fund_nav_seed.csv"
 LIST_CSV = DATA_DIR / "fund_list_seed.csv"
-
-# 真实费率（管理费+托管费，不含申购赎回）
-CORE_QDII_FUNDS = [
-    {"fund_code": "513100", "fund_name": "纳斯达克100ETF(华夏)",    "fund_type": "ETF",      "benchmark": "纳斯达克100", "region": "美国",   "expense_ratio": 0.006},
-    {"fund_code": "513500", "fund_name": "标普500ETF(南方)",        "fund_type": "ETF",      "benchmark": "标普500",    "region": "美国",   "expense_ratio": 0.006},
-    {"fund_code": "159941", "fund_name": "纳斯达克ETF(博时)",       "fund_type": "ETF",      "benchmark": "纳斯达克100", "region": "美国",   "expense_ratio": 0.006},
-    {"fund_code": "040046", "fund_name": "华安标普500增强",         "fund_type": "增强指数",  "benchmark": "标普500",    "region": "美国",   "expense_ratio": 0.012},
-    {"fund_code": "006479", "fund_name": "易方达标普科技",          "fund_type": "被动指数",  "benchmark": "标普科技",   "region": "美国",   "expense_ratio": 0.012},
-    {"fund_code": "206005", "fund_name": "博时标普500ETF联接",      "fund_type": "ETF联接",  "benchmark": "标普500",    "region": "美国",   "expense_ratio": 0.0085},
-    {"fund_code": "161130", "fund_name": "标普500指数LOF(富国)",    "fund_type": "LOF",      "benchmark": "标普500",    "region": "美国",   "expense_ratio": 0.006},
-    {"fund_code": "002803", "fund_name": "摩根标普500指数",         "fund_type": "被动指数",  "benchmark": "标普500",    "region": "美国",   "expense_ratio": 0.007},
-    {"fund_code": "513880", "fund_name": "华夏野村日经225ETF",      "fund_type": "ETF",      "benchmark": "日经225",    "region": "日本",   "expense_ratio": 0.006},
-    {"fund_code": "513000", "fund_name": "华安日本股票ETF",         "fund_type": "ETF",      "benchmark": "MSCI日本",   "region": "日本",   "expense_ratio": 0.006},
-    {"fund_code": "164403", "fund_name": "工银日本股票LOF",         "fund_type": "LOF",      "benchmark": "MSCI日本",   "region": "日本",   "expense_ratio": 0.018},
-    {"fund_code": "015691", "fund_name": "华泰柏瑞日经225ETF",      "fund_type": "ETF",      "benchmark": "日经225",    "region": "日本",   "expense_ratio": 0.006},
-    {"fund_code": "050026", "fund_name": "博时日本ETF联接",         "fund_type": "ETF联接",  "benchmark": "日经225",    "region": "日本",   "expense_ratio": 0.006},
-    {"fund_code": "513030", "fund_name": "华安德国DAX ETF",        "fund_type": "ETF",      "benchmark": "DAX",        "region": "德国",   "expense_ratio": 0.006},
-    {"fund_code": "160218", "fund_name": "博时德国DAX ETF联接",     "fund_type": "ETF联接",  "benchmark": "DAX",        "region": "德国",   "expense_ratio": 0.006},
-    {"fund_code": "164701", "fund_name": "招商欧洲精选LOF",         "fund_type": "LOF",      "benchmark": "MSCI欧洲",   "region": "欧洲",   "expense_ratio": 0.018},
-    {"fund_code": "001548", "fund_name": "汇添富欧洲市场",          "fund_type": "主动QDII", "benchmark": "MSCI欧洲",   "region": "欧洲",   "expense_ratio": 0.0175},
-    {"fund_code": "003318", "fund_name": "易方达欧洲基金",          "fund_type": "被动指数",  "benchmark": "MSCI欧洲",   "region": "欧洲",   "expense_ratio": 0.012},
-    {"fund_code": "270042", "fund_name": "广发全球精选",            "fund_type": "主动QDII", "benchmark": "MSCI全球",   "region": "全球",   "expense_ratio": 0.018},
-    {"fund_code": "110022", "fund_name": "易方达亚洲精选",          "fund_type": "主动QDII", "benchmark": "MSCI亚洲",   "region": "亚洲",   "expense_ratio": 0.018},
-    {"fund_code": "481010", "fund_name": "工银全球股票",            "fund_type": "主动QDII", "benchmark": "MSCI全球",   "region": "全球",   "expense_ratio": 0.018},
-    {"fund_code": "485010", "fund_name": "工银全球精选",            "fund_type": "主动QDII", "benchmark": "MSCI全球",   "region": "全球",   "expense_ratio": 0.018},
-    {"fund_code": "164906", "fund_name": "华宝标普油气LOF",         "fund_type": "LOF",      "benchmark": "标普油气",   "region": "全球",   "expense_ratio": 0.0072},
-    {"fund_code": "000934", "fund_name": "汇添富全球互联网",        "fund_type": "主动QDII", "benchmark": "纳斯达克100", "region": "美国",   "expense_ratio": 0.018},
-    {"fund_code": "519977", "fund_name": "长信全球债券",            "fund_type": "QDII债券", "benchmark": "全球债券",   "region": "全球",   "expense_ratio": 0.009},
-]
 
 HEADERS = {
     "Referer": "https://fundf10.eastmoney.com/",

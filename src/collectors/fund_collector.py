@@ -4,45 +4,11 @@ import numpy as np
 from datetime import datetime, timedelta
 from pathlib import Path
 from ..utils.database import upsert_dataframe, read_table
+from ..utils.fund_universe import CORE_QDII_FUNDS, EXPENSE_RATIO_BY_CODE
 
 _DATA_DIR = Path(__file__).parent.parent.parent / "data"
 _NAV_CSV = _DATA_DIR / "fund_nav_seed.csv"
 _LIST_CSV = _DATA_DIR / "fund_list_seed.csv"
-
-
-# 核心QDII基金标的（手动维护 + akshare动态补充）
-CORE_QDII_FUNDS = [
-    # 美国宽基
-    {"fund_code": "513100", "fund_name": "纳斯达克100ETF(华夏)", "fund_type": "ETF", "benchmark": "纳斯达克100", "region": "美国"},
-    {"fund_code": "513500", "fund_name": "标普500ETF(南方)", "fund_type": "ETF", "benchmark": "标普500", "region": "美国"},
-    {"fund_code": "159941", "fund_name": "纳斯达克ETF(博时)", "fund_type": "ETF", "benchmark": "纳斯达克100", "region": "美国"},
-    {"fund_code": "040046", "fund_name": "华安标普500增强", "fund_type": "增强指数", "benchmark": "标普500", "region": "美国"},
-    {"fund_code": "006479", "fund_name": "易方达标普科技", "fund_type": "被动指数", "benchmark": "标普科技", "region": "美国"},
-    {"fund_code": "206005", "fund_name": "博时标普500ETF联接", "fund_type": "ETF联接", "benchmark": "标普500", "region": "美国"},
-    {"fund_code": "161130", "fund_name": "标普500指数LOF(富国)", "fund_type": "LOF", "benchmark": "标普500", "region": "美国"},
-    {"fund_code": "002803", "fund_name": "摩根标普500指数", "fund_type": "被动指数", "benchmark": "标普500", "region": "美国"},
-    # 日本市场
-    {"fund_code": "513880", "fund_name": "华夏野村日经225ETF", "fund_type": "ETF", "benchmark": "日经225", "region": "日本"},
-    {"fund_code": "513000", "fund_name": "华安日本股票ETF", "fund_type": "ETF", "benchmark": "MSCI日本", "region": "日本"},
-    {"fund_code": "164403", "fund_name": "工银日本股票LOF", "fund_type": "LOF", "benchmark": "MSCI日本", "region": "日本"},
-    {"fund_code": "015691", "fund_name": "华泰柏瑞日经225ETF", "fund_type": "ETF", "benchmark": "日经225", "region": "日本"},
-    {"fund_code": "050026", "fund_name": "博时日本ETF联接", "fund_type": "ETF联接", "benchmark": "日经225", "region": "日本"},
-    # 欧洲/德国市场
-    {"fund_code": "513030", "fund_name": "华安德国DAX ETF", "fund_type": "ETF", "benchmark": "DAX", "region": "德国"},
-    {"fund_code": "160218", "fund_name": "博时德国DAX ETF联接", "fund_type": "ETF联接", "benchmark": "DAX", "region": "德国"},
-    {"fund_code": "164701", "fund_name": "招商欧洲精选LOF", "fund_type": "LOF", "benchmark": "MSCI欧洲", "region": "欧洲"},
-    {"fund_code": "001548", "fund_name": "汇添富欧洲市场", "fund_type": "主动QDII", "benchmark": "MSCI欧洲", "region": "欧洲"},
-    {"fund_code": "003318", "fund_name": "易方达欧洲基金", "fund_type": "被动指数", "benchmark": "MSCI欧洲", "region": "欧洲"},
-    # 全球/亚洲
-    {"fund_code": "270042", "fund_name": "广发全球精选", "fund_type": "主动QDII", "benchmark": "MSCI全球", "region": "全球"},
-    {"fund_code": "110022", "fund_name": "易方达亚洲精选", "fund_type": "主动QDII", "benchmark": "MSCI亚洲", "region": "亚洲"},
-    {"fund_code": "481010", "fund_name": "工银全球股票", "fund_type": "主动QDII", "benchmark": "MSCI全球", "region": "全球"},
-    {"fund_code": "485010", "fund_name": "工银全球精选", "fund_type": "主动QDII", "benchmark": "MSCI全球", "region": "全球"},
-    # 其他
-    {"fund_code": "164906", "fund_name": "华宝标普油气LOF", "fund_type": "LOF", "benchmark": "标普石油天然气", "region": "全球"},
-    {"fund_code": "000934", "fund_name": "汇添富全球互联网", "fund_type": "主动QDII", "benchmark": "纳斯达克100", "region": "美国"},
-    {"fund_code": "519977", "fund_name": "长信全球债券", "fund_type": "QDII债券", "benchmark": "全球债券", "region": "全球"},
-]
 
 
 def collect_fund_data() -> tuple[list, dict]:
@@ -86,23 +52,32 @@ def _collect_via_akshare(ak) -> list:
         df = ak.fund_open_fund_info_em(symbol="QDII")
         funds = []
         for _, row in df.iterrows():
+            code = str(row.get("基金代码", ""))
             funds.append({
-                "fund_code": str(row.get("基金代码", "")),
+                "fund_code": code,
                 "fund_name": str(row.get("基金简称", "")),
                 "fund_type": "QDII",
                 "manager": str(row.get("基金经理人", "")),
                 "company": str(row.get("基金公司", "")),
                 "nav": float(row.get("单位净值", 0) or 0),
                 "nav_date": str(row.get("净值日期", "")),
-                "expense_ratio": 0.0,
+                # 真实费率：核心库已知则回填，未知留 None（不要清零，否则成本分恒满分）
+                "expense_ratio": EXPENSE_RATIO_BY_CODE.get(code),
             })
         print(f"[OK] akshare QDII基金列表: {len(funds)} 只")
-        # 合并核心基金确保覆盖
-        core_codes = {f["fund_code"] for f in CORE_QDII_FUNDS}
+        # 合并核心基金确保覆盖（带真实费率与基准）
         existing_codes = {f["fund_code"] for f in funds}
         for cf in CORE_QDII_FUNDS:
             if cf["fund_code"] not in existing_codes:
-                funds.append({**cf, "manager": "", "company": "", "nav": 1.0, "nav_date": "", "expense_ratio": 0.0})
+                funds.append({
+                    "fund_code": cf["fund_code"],
+                    "fund_name": cf["fund_name"],
+                    "fund_type": cf["fund_type"],
+                    "manager": "", "company": "",
+                    "nav": 1.0, "nav_date": "",
+                    "expense_ratio": cf["expense_ratio"],
+                    "benchmark": cf.get("benchmark", ""),
+                })
         return funds
     except Exception as e:
         print(f"[WARN] akshare QDII列表获取失败: {e}")
@@ -137,7 +112,7 @@ def _build_core_list() -> list:
             "company": "",
             "nav": 1.0,
             "nav_date": datetime.now().strftime("%Y-%m-%d"),
-            "expense_ratio": 0.012,
+            "expense_ratio": cf["expense_ratio"],  # 真实费率
             "benchmark": cf.get("benchmark", ""),
         })
     return funds
@@ -168,7 +143,7 @@ def _save_fund_list(fund_list: list):
         return
     df = pd.DataFrame(fund_list)
     df = df[[c for c in ["fund_code", "fund_name", "fund_type", "manager", "company",
-                          "nav", "nav_date", "expense_ratio"] if c in df.columns]]
+                          "nav", "nav_date", "expense_ratio", "benchmark"] if c in df.columns]]
     df["fund_code"] = df["fund_code"].astype(str)
     upsert_dataframe(df, "fund_list", ["fund_code"])
     print(f"[DB] 基金列表已保存 {len(df)} 只")

@@ -6,7 +6,7 @@ from ..utils.database import read_table
 
 def analyze_macro_cycle() -> dict:
     """判断当前经济周期阶段并返回分析结果"""
-    gdp_df = read_table("macro_data", "series_id = ? ORDER BY date DESC LIMIT 5", ("GDP",))
+    gdp_df = read_table("macro_data", "series_id = ? ORDER BY date DESC LIMIT 5", ("GDPC1",))
     cpi_df = read_table("macro_data", "series_id = ? ORDER BY date DESC LIMIT 12", ("CPIAUCSL",))
     rate_df = read_table("macro_data", "series_id = ? ORDER BY date DESC LIMIT 12", ("FEDFUNDS",))
     unemploy_df = read_table("macro_data", "series_id = ? ORDER BY date DESC LIMIT 12", ("UNRATE",))

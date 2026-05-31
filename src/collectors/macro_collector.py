@@ -6,13 +6,15 @@ from ..utils.database import upsert_dataframe
 
 
 SERIES_NAMES = {
-    "GDP": "美国GDP（十亿美元）",
+    "GDPC1": "实际GDP（链式美元，季度）",
     "CPIAUCSL": "CPI（城市消费者）",
     "CPILFESL": "核心CPI（剔除食品能源）",
     "FEDFUNDS": "联邦基金利率",
     "GS10": "10年期国债收益率",
     "GS2": "2年期国债收益率",
     "UNRATE": "失业率",
+    "BAMLH0A0HYM2": "高收益债期权调整利差",
+    "WILL5000INDFC": "威尔希尔5000全市值指数",
     "MANEMP": "制造业就业",
     "RSXFS": "零售销售（剔除食品）",
     "HOUST": "新屋开工数",
@@ -94,6 +96,14 @@ def _generate_mock_macro() -> dict:
             values = (310 + np.cumsum(np.random.randn(60) * 0.3)).tolist()
         elif series_id == "CPILFESL":
             values = (320 + np.cumsum(np.random.randn(60) * 0.2)).tolist()
+        elif series_id == "GDPC1":
+            # 实际GDP（季度，约2%年增长），用累积温和增长模拟同比 ~2%
+            values = (22000 * (1 + np.cumsum(np.full(60, 0.02 / 12)))).tolist()
+        elif series_id == "BAMLH0A0HYM2":
+            # 高收益债利差，常态 3~4%
+            values = (3.5 + np.random.randn(60) * 0.4).clip(2, 9).tolist()
+        elif series_id == "WILL5000INDFC":
+            values = (48000 + np.cumsum(np.random.randn(60) * 200)).tolist()
         else:
             values = (100 + np.random.randn(60) * 5).tolist()
 

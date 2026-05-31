@@ -230,7 +230,7 @@ def _macro_score_from_snap(mac: pd.DataFrame) -> float:
             return None
         return (float(sub.iloc[-1]["value"]) / float(sub.iloc[-n]["value"]) - 1) * 100
 
-    g     = yoy("GDP", 5)
+    g     = yoy("GDPC1", 5)
     inf   = yoy("CPIAUCSL", 12)
     rate  = latest("FEDFUNDS")
     unemp = latest("UNRATE")
@@ -313,14 +313,17 @@ def _score_funds(nav_snap: pd.DataFrame, fund_list: pd.DataFrame,
 
 
 def _perf_score(nav_s: pd.Series) -> float:
+    # 与 scorer 同口径：各区间收益年化后对统一 20%/年 目标打分
     today = nav_s.index[-1]
     ws = 0.0; wt = 0.0
-    for days, w, tgt in [(365, 0.4, 20), (365*3, 0.35, 20), (180, 0.25, 10)]:
+    ANNUAL_TARGET = 20.0
+    for days, years, w in [(365, 1.0, 0.4), (365*3, 3.0, 0.35), (180, 0.5, 0.25)]:
         cut = today - pd.Timedelta(days=days)
         sub = nav_s[nav_s.index >= cut]
         if len(sub) >= 2:
-            ret = (float(sub.iloc[-1]) / float(sub.iloc[0]) - 1) * 100
-            ws += min(10, max(0, ret / tgt * 10)) * w
+            growth = float(sub.iloc[-1]) / float(sub.iloc[0])
+            ann = (growth ** (1.0 / years) - 1) * 100 if growth > 0 else -100.0
+            ws += min(10, max(0, ann / ANNUAL_TARGET * 10)) * w
             wt += w
     return ws / wt if wt > 0 else 5.0
 
@@ -340,15 +343,15 @@ def _risk_score(nav_s: pd.Series) -> float:
 
 
 def _strategy_score(fund_row, signal: dict) -> float:
-    name = str(fund_row.get("fund_name", ""))
-    ftype = str(fund_row.get("fund_type", ""))
-    sig = signal["composite_signal"]
-    is_growth = any(k in name  for k in ["纳斯达克", "科技", "100"])
-    is_index  = any(k in ftype for k in ["ETF", "指数"]) or "500" in name
-    is_active = "主动" in ftype
-    if   sig == "重仓进取": return 9.0 if is_growth else 7.5 if is_index else 6.0
-    elif sig == "标配稳健": return 8.0 if is_index  else 7.0 if is_growth else 6.5
-    else:                   return 7.0 if is_index  else 5.0 if is_active else 6.0
+    """与 scorer._calc_strategy_score 同口径：按资产类别匹配信号。"""
+    from ..utils.fund_universe import classify_asset_class, strategy_match_score
+    asset_class = classify_asset_class(
+        fund_code=str(fund_row.get("fund_code", "")),
+        fund_type=str(fund_row.get("fund_type", "")),
+        fund_name=str(fund_row.get("fund_name", "")),
+        benchmark=str(fund_row.get("benchmark", "")),
+    )
+    return strategy_match_score(asset_class, signal["composite_signal"])
 
 
 def _cost_score(er: float, cfg: dict) -> float:
