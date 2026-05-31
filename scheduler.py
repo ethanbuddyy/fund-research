@@ -6,8 +6,18 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import schedule
 import time
 import logging
-from datetime import datetime
+import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
+
+
+def _beijing_schedule_time(hour: int, minute: int) -> str:
+    """将北京时间 HH:MM 转换为系统本地时间字符串，供 schedule 库使用。"""
+    beijing = ZoneInfo("Asia/Shanghai")
+    today = datetime.date.today()
+    t = datetime.datetime(today.year, today.month, today.day, hour, minute, tzinfo=beijing)
+    local = t.astimezone()
+    return f"{local.hour:02d}:{local.minute:02d}"
 
 _LOG_PATH = Path(__file__).parent / "data" / "scheduler.log"
 _LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -68,9 +78,11 @@ if __name__ == "__main__":
         logger.info("执行单次数据更新...")
         run_daily_update()
     else:
-        # 每天早上 8:30 更新（北京时间）
-        schedule.every().day.at("08:30").do(run_daily_update)
-        logger.info("调度器启动，每天 08:30 自动更新数据")
+        # 每天早上 8:30 北京时间更新（自动适配系统时区）
+        schedule_time = _beijing_schedule_time(8, 30)
+        schedule.every().day.at(schedule_time).do(run_daily_update)
+        tz_name = datetime.datetime.now().astimezone().tzname()
+        logger.info(f"调度器启动，每天 08:30 北京时间（本地时区 {tz_name} = {schedule_time}）自动更新数据")
         logger.info("按 Ctrl+C 停止调度器")
         while True:
             schedule.run_pending()

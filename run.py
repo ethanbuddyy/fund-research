@@ -45,12 +45,13 @@ def fetch_data():
 
 def launch_dashboard():
     dashboard_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard", "app.py")
-    print(f"\n[仪表盘] 启动 Streamlit → http://localhost:8501")
+    print(f"\n[仪表盘] 启动 Streamlit，请在浏览器打开 → http://localhost:8501")
     print("按 Ctrl+C 停止服务\n")
     subprocess.run([
         sys.executable, "-m", "streamlit", "run", dashboard_path,
         "--server.port", "8501",
-        "--server.headless", "false",
+        "--server.headless", "true",   # WSL 下禁止自动弹出浏览器
+        "--server.address", "0.0.0.0", # 允许 Windows 宿主机通过 localhost 访问
         "--browser.gatherUsageStats", "false",
     ])
 

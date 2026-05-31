@@ -1,0 +1,8 @@
+# 统一使用 LF 行尾，避免 Windows/WSL 混用时出现 CRLF 问题
+* text=auto eol=lf
+*.py text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.sh text eol=lf
