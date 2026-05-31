@@ -60,6 +60,56 @@ BENCHMARK_BY_CODE   = {f["fund_code"]: f["benchmark"]   for f in CORE_QDII_FUNDS
 REGION_BY_CODE      = {f["fund_code"]: f["region"]      for f in CORE_QDII_FUNDS}
 
 
+# ── 按名称客观推断基准/地区（供 fund_screener 对全市场 QDII 分类去重）──
+# 顺序敏感：更具体的关键词在前（如“标普科技/标普油气”先于“标普500”）。
+_BENCHMARK_RULES = [
+    (["标普科技", "标普500科技", "标普信息科技"], "标普科技"),
+    (["油气", "石油", "天然气", "标普油气"], "标普油气"),
+    (["纳斯达克", "纳指", "NASDAQ"], "纳斯达克100"),
+    (["标普500", "标普 500", "S&P500", "标普500"], "标普500"),
+    (["日经", "日経", "225"], "日经225"),
+    (["DAX", "德国"], "DAX"),
+    (["恒生", "香港", "港股", "H股"], "恒生指数"),
+    (["MSCI日本", "日本"], "MSCI日本"),
+    (["欧洲", "MSCI欧洲", "欧股"], "MSCI欧洲"),
+    (["亚洲", "亚太", "MSCI亚洲"], "MSCI亚洲"),
+    (["印度"], "印度市场"),
+    (["越南"], "越南市场"),
+    (["全球", "海外", "MSCI全球", "世界"], "MSCI全球"),
+    (["债"], "全球债券"),
+    (["黄金", "金矿"], "黄金"),
+]
+
+_REGION_RULES = [
+    (["纳斯达克", "纳指", "标普", "S&P", "美国", "美股", "NASDAQ"], "美国"),
+    (["日经", "日本", "日経"], "日本"),
+    (["DAX", "德国"], "德国"),
+    (["恒生", "香港", "港股", "H股"], "香港"),
+    (["欧洲", "欧股"], "欧洲"),
+    (["印度"], "印度"),
+    (["越南"], "越南"),
+    (["亚洲", "亚太"], "亚洲"),
+    (["全球", "海外", "世界"], "全球"),
+]
+
+
+def infer_benchmark(fund_name: str, benchmark: str = "") -> str:
+    """按名称/已知基准客观推断跟踪基准；无法判断时返回名称本身（保证可去重）。"""
+    text = f"{benchmark} {fund_name}"
+    for kws, label in _BENCHMARK_RULES:
+        if any(k in text for k in kws):
+            return label
+    return (benchmark or fund_name or "").strip()
+
+
+def infer_region(fund_name: str, benchmark: str = "") -> str:
+    text = f"{benchmark} {fund_name}"
+    for kws, label in _REGION_RULES:
+        if any(k in text for k in kws):
+            return label
+    return "全球"
+
+
 def strategy_match_score(asset_class: str, composite_signal: str) -> float:
     """资产类别 × 综合信号 → 策略匹配分（scorer 与回测共用，确保口径一致）。"""
     if composite_signal == "重仓进取":

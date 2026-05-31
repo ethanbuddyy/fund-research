@@ -27,12 +27,20 @@ def fetch_data():
     from src.collectors.market_collector import collect_market_data
     collect_market_data()
 
-    from src.collectors.fund_collector import collect_fund_data
-    collect_fund_data()
+    # 基金池：规则筛选优先（开启时），失败/禁用回退到核心列表
+    from src.collectors.fund_screener import screen_funds, save_pool
+    pool = screen_funds()
+    if pool:
+        save_pool(pool)
+        pool_codes = [p["fund_code"] for p in pool]
+    else:
+        from src.collectors.fund_collector import collect_fund_data
+        collect_fund_data()
+        pool_codes = None  # eastmoney 用默认核心列表
 
     # 用天天基金 pingzhongdata 富集真实净值与持仓（覆盖 akshare/模拟净值）
     from src.collectors.eastmoney_collector import collect_eastmoney
-    collect_eastmoney()
+    collect_eastmoney(pool_codes)
 
     from src.collectors.valuation_collector import collect_valuation_data
     collect_valuation_data()

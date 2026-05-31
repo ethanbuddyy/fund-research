@@ -53,12 +53,20 @@ def run_daily_update():
         collect_market_data()
         logger.info("[2/5] 市场数据更新完成")
 
-        from src.collectors.fund_collector import collect_fund_data
-        collect_fund_data()
-        logger.info("[3/5] 基金数据更新完成")
+        from src.collectors.fund_screener import screen_funds, save_pool
+        pool = screen_funds()
+        if pool:
+            save_pool(pool)
+            pool_codes = [p["fund_code"] for p in pool]
+            logger.info(f"[3/5] 规则筛选基金池完成：{len(pool)} 只")
+        else:
+            from src.collectors.fund_collector import collect_fund_data
+            collect_fund_data()
+            pool_codes = None
+            logger.info("[3/5] 基金数据更新完成（核心池）")
 
         from src.collectors.eastmoney_collector import collect_eastmoney
-        collect_eastmoney()
+        collect_eastmoney(pool_codes)
         logger.info("[3.2/5] 天天基金真实净值/持仓富集完成")
 
         from src.collectors.valuation_collector import collect_valuation_data

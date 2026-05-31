@@ -71,6 +71,18 @@ sector_etfs:
   - {symbol: "XLP", name: "必需消费"}
   - {symbol: "XLI", name: "工业"}
 
+# ── 基金池规则筛选（开启后用规则筛选池替代硬编码核心列表）──
+# 数据源：东方财富 QDII 排行。抓取失败/禁用时自动回退到 fund_universe 核心池。
+fund_screener:
+  enabled: true
+  min_inception_years: 2.0     # 成立满 N 年
+  require_3y_record: false     # 是否必须有近3年业绩
+  max_purchase_fee: 0.015      # 申购费率上限(小数)，未知费率不一票否决
+  per_benchmark_keep: 2        # 每个底层指数保留最优 N 只（去重，消除同质冗余）
+  max_pool_size: 30            # 基金池上限
+  rank_by: "return_3y"         # 组内/全局排序依据：return_1y / return_3y / return_since
+  min_aum_yi: 0                # 规模下限(亿)，>0 需 pingzhongdata 富集，0=不限
+
 # ── 基金综合评分权重（合计 = 1.0）──────────────────────
 scoring_weights:
   performance: 0.25      # 历史绩效（年化收益）
