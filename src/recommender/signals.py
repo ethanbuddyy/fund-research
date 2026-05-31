@@ -125,6 +125,14 @@ def generate_market_signal(save: bool = True) -> dict:
     from ..utils import provenance
     data_source = provenance.overall_mode()
 
+    # 全球各区域宏观背景（多区域QDII用；作为上下文，不并入已验证的量化综合信号，
+    # 以免与回测口径不一致）
+    try:
+        from ..analyzers.global_macro_analyzer import analyze_global_macro
+        global_macro = analyze_global_macro()
+    except Exception:
+        global_macro = {"available": False, "regions": {}}
+
     signal = {
         "date": datetime.now().strftime("%Y-%m-%d"),
         "data_source": data_source,                 # real / partial / mock
@@ -148,6 +156,7 @@ def generate_market_signal(save: bool = True) -> dict:
         "fed_direction": fed_direction,
         "macro_adj": round(macro_adj, 2),
         "macro": macro,
+        "global_macro": global_macro,
         "valuation": valuation,
         "sentiment": sentiment,
         "masters": {

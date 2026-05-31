@@ -111,6 +111,20 @@ def _generate_notes(market_signal: dict) -> list[str]:
     if macro.get("yield_inverted"):
         notes.append("警示：收益率曲线倒挂，历史上衰退先行指标，需提高防守意识")
 
+    # 区域宏观背景（World Bank/OECD）：提示强弱区域，辅助多区域QDII取舍
+    gm = market_signal.get("global_macro", {})
+    if gm.get("available") and gm.get("regions"):
+        strongest, weakest = gm.get("strongest"), gm.get("weakest")
+        regions = gm["regions"]
+        if strongest and weakest and strongest != weakest:
+            s_lab = regions[strongest]["label"]
+            w_lab = regions[weakest]["label"]
+            notes.append(f"区域宏观：{strongest}最强（{s_lab}），{weakest}最弱（{w_lab}），"
+                         f"同等条件下优先配置宏观更强区域的QDII")
+        contracting = [r for r, info in regions.items() if info.get("label") == "收缩"]
+        if contracting:
+            notes.append(f"区域警示：{('、'.join(contracting))} 处于收缩区间，相关QDII需谨慎")
+
     return notes
 
 

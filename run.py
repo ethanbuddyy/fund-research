@@ -21,6 +21,9 @@ def fetch_data():
     from src.collectors.macro_collector import collect_macro_data
     collect_macro_data()
 
+    from src.collectors.global_macro_collector import collect_global_macro
+    collect_global_macro()
+
     from src.collectors.market_collector import collect_market_data
     collect_market_data()
 

@@ -27,6 +27,23 @@ fred_series:
   hy_credit_spread: "BAMLH0A0HYM2"  # 高收益债期权调整利差（独立风险因子）
   wilshire5000: "WILL5000INDFC"     # 威尔希尔5000全市值指数（巴菲特指标分子）
 
+# ── 全球宏观（World Bank + OECD，均免费无需 Key）─────────
+# World Bank 提供各国 GDP增长/通胀/失业（年度，稳定）；OECD CLI 为先行指标（尽力而为）。
+# 用于补足「全球QDII却只有美国宏观」的缺口，覆盖日/德/欧/英/中等基金所在区域。
+global_macro:
+  worldbank_indicators:
+    gdp_growth: "NY.GDP.MKTP.KD.ZG"   # GDP 实际增长率(年%)
+    inflation: "FP.CPI.TOTL.ZG"       # CPI 通胀(年%)
+    unemployment: "SL.UEM.TOTL.ZS"    # 失业率(% 劳动力)
+  regions:
+    - {name: "美国",   wb: "USA", oecd: "USA"}
+    - {name: "日本",   wb: "JPN", oecd: "JPN"}
+    - {name: "德国",   wb: "DEU", oecd: "DEU"}
+    - {name: "欧元区", wb: "EMU", oecd: "EA20"}
+    - {name: "英国",   wb: "GBR", oecd: "GBR"}
+    - {name: "中国",   wb: "CHN", oecd: "CHN"}
+    - {name: "全球",   wb: "WLD", oecd: "OECD"}
+
 # ── 市场指数（yfinance symbol，无需 API Key）────────────
 market_indices:
   us:

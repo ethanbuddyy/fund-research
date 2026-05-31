@@ -45,6 +45,10 @@ def run_daily_update():
         collect_macro_data()
         logger.info("[1/5] 宏观数据更新完成")
 
+        from src.collectors.global_macro_collector import collect_global_macro
+        collect_global_macro()
+        logger.info("[1.5/5] 全球宏观(World Bank/OECD)更新完成")
+
         from src.collectors.market_collector import collect_market_data
         collect_market_data()
         logger.info("[2/5] 市场数据更新完成")

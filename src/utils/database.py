@@ -106,6 +106,17 @@ def init_database():
         updated_at TEXT DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS global_macro (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        region TEXT NOT NULL,
+        indicator TEXT NOT NULL,
+        date TEXT NOT NULL,
+        value REAL,
+        source TEXT,
+        updated_at TEXT DEFAULT (datetime('now')),
+        UNIQUE(region, indicator, date)
+    );
+
     CREATE TABLE IF NOT EXISTS valuation_data (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         metric TEXT NOT NULL,
