@@ -22,3 +22,7 @@ build/
 
 # Claude Code local settings
 .claude/
+
+# MCP 外部克隆仓库（通过 tools/setup_mcp.sh 安装）
+tools/stockreport-mcp/
+tools/financial-datasets-mcp/

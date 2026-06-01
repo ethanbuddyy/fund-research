@@ -1,0 +1,27 @@
+{
+  "mcpServers": {
+    "sequential-thinking": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"],
+      "description": "官方结构化推理服务器（Anthropic）：将复杂投资决策拆解为可审计的多步思维链，避免跳步错误"
+    },
+    "yfinance-market": {
+      "command": "/home/yu/.local/bin/yfinance-market-mcp",
+      "description": "Yahoo Finance MCP（30个工具）：实时行情、历史价格、财务报表、分析师评级、期权链、市场新闻"
+    },
+    "technical-analysis": {
+      "command": "python3",
+      "args": ["/home/yu/fund-research/tools/mcp_technical_analysis.py"],
+      "description": "项目原生技术分析服务器：RSI/MACD/布林带/均线，支持单标的指标查询、趋势判断、多基金横向对比"
+    },
+    "stockreport": {
+      "command": "python3",
+      "args": [
+        "/home/yu/fund-research/tools/stockreport-mcp/mcp_server.py",
+        "--data-source", "hybrid",
+        "--log-level", "WARNING"
+      ],
+      "description": "StockReport MCP（jamesdingAI）：A股/港股/美股多市场，K线/财务指标/宏观经济/分红，Baostock+AkShare混合数据源"
+    }
+  }
+}

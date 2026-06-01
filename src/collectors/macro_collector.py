@@ -16,7 +16,7 @@ SERIES_NAMES = {
     "T10Y2Y": "10年-2年期限利差",
     "UNRATE": "失业率",
     "BAMLH0A0HYM2": "高收益债期权调整利差",
-    "WILL5000INDFC": "威尔希尔5000全市值指数",
+    "NCBEILQ027S": "美国股权总市值（Fed Flow of Funds，百万美元）",
     "MANEMP": "制造业就业",
     "RSXFS": "零售销售（剔除食品）",
     "HOUST": "新屋开工数",
@@ -133,8 +133,8 @@ def _generate_mock_macro() -> dict:
         elif series_id == "BAMLH0A0HYM2":
             # 高收益债利差，常态 3~4%
             values = (3.5 + np.random.randn(60) * 0.4).clip(2, 9).tolist()
-        elif series_id == "WILL5000INDFC":
-            values = (48000 + np.cumsum(np.random.randn(60) * 200)).tolist()
+        elif series_id == "NCBEILQ027S":
+            values = (60000000 + np.cumsum(np.random.randn(60) * 500000)).tolist()
         else:
             values = (100 + np.random.randn(60) * 5).tolist()
 

@@ -81,15 +81,21 @@ def collect_global_macro() -> dict:
 
 def _fetch_worldbank(requests, wb_code: str, indicator: str, start: int, end: int) -> list:
     """返回 [(date 'YYYY', value), ...]（按年份升序，跳过空值）。"""
+    import time
     url = _WB_BASE.format(wb=wb_code, ind=indicator)
     params = {"format": "json", "date": f"{start}:{end}", "per_page": 100}
-    try:
-        resp = requests.get(url, params=params, headers=_HEADERS, timeout=15)
-        resp.raise_for_status()
-        data = resp.json()
-    except Exception as e:
-        print(f"[WARN] WorldBank {wb_code}/{indicator} 失败: {e}")
-        return []
+    for attempt in range(3):
+        try:
+            resp = requests.get(url, params=params, headers=_HEADERS, timeout=20)
+            resp.raise_for_status()
+            data = resp.json()
+            break
+        except Exception as e:
+            if attempt < 2:
+                time.sleep(3)
+                continue
+            print(f"[WARN] WorldBank {wb_code}/{indicator} 失败: {e}")
+            return []
     # World Bank 返回 [metadata, [observations]]
     if not (isinstance(data, list) and len(data) >= 2 and data[1]):
         return []
