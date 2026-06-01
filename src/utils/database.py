@@ -91,7 +91,7 @@ def init_database():
         performance_score REAL,
         risk_score REAL,
         strategy_score REAL,
-        timing_score REAL,
+        consistency_score REAL,
         cost_score REAL,
         signal TEXT,
         recommendation TEXT,
