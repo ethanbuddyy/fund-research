@@ -1,6 +1,7 @@
 """投资组合构建与建议"""
 import pandas as pd
 from ..utils.database import read_table
+from ..utils.config import load_config
 
 
 CORE_BENCHMARKS = ["标普500", "S&P", "纳斯达克100", "MSCI全球", "全球"]
@@ -10,6 +11,7 @@ SATELLITE_BENCHMARKS = ["科技", "医疗", "能源", "亚洲", "主动"]
 def build_portfolio_recommendation(market_signal: dict, top_n: int = 10) -> dict:
     scores_df = read_table("fund_scores")
     funds_df = read_table("fund_list")
+    cfg = load_config()
 
     if scores_df.empty:
         return _empty_portfolio(market_signal)
@@ -24,10 +26,16 @@ def build_portfolio_recommendation(market_signal: dict, top_n: int = 10) -> dict
     satellite_alloc = market_signal.get("satellite_allocation", 0.30)
     cash_alloc = market_signal.get("cash_allocation", 0.10)
 
+    score_threshold = cfg.get("rebalancing", {}).get("score_threshold", 10)
+    prev_codes = _load_previous_codes()
+
     # 核心仓位：宽基指数
-    core_funds = _select_core_funds(merged, core_alloc)
+    core_funds = _select_core_funds(merged, core_alloc, prev_codes, score_threshold)
     # 卫星仓位：行业/主动/主题
-    satellite_funds = _select_satellite_funds(merged, satellite_alloc, exclude_codes={f["fund_code"] for f in core_funds})
+    satellite_funds = _select_satellite_funds(merged, satellite_alloc,
+                                              exclude_codes={f["fund_code"] for f in core_funds},
+                                              prev_codes=prev_codes,
+                                              score_threshold=score_threshold)
 
     total_invested = core_alloc + satellite_alloc
     portfolio = {
@@ -44,50 +52,106 @@ def build_portfolio_recommendation(market_signal: dict, top_n: int = 10) -> dict
     return portfolio
 
 
-def _select_core_funds(df: pd.DataFrame, alloc: float) -> list:
+def _load_previous_codes() -> dict[str, float]:
+    """读取上次组合建议的基金代码 → 分数映射，用于换仓门槛判断。"""
+    try:
+        prev = read_table("fund_scores")
+        if prev.empty:
+            return {}
+        return dict(zip(prev["fund_code"].astype(str), prev["total_score"].astype(float)))
+    except Exception:
+        return {}
+
+
+def _should_replace(new_code: str, new_score: float,
+                    current_codes: set, prev_scores: dict,
+                    score_threshold: float) -> bool:
+    """新候选基金是否值得替换已有持仓。
+    若当前槽位已由本基金占据，无条件保留；
+    若新基金高出所有当前持仓至少 score_threshold 分，才触发替换建议。
+    """
+    if new_code in current_codes:
+        return True
+    if not current_codes:
+        return True
+    current_scores = [prev_scores.get(c, 0) for c in current_codes]
+    max_current = max(current_scores) if current_scores else 0
+    return new_score >= max_current + score_threshold
+
+
+def _select_core_funds(df: pd.DataFrame, alloc: float,
+                       prev_scores: dict, score_threshold: float) -> list:
     core = df[df["fund_name"].str.contains("|".join(CORE_BENCHMARKS), na=False)]
     if core.empty:
         core = df[df["fund_type"].str.contains("ETF|指数|被动", na=False)]
 
-    picks = core.head(3)
+    # 当前核心持仓（上次建议中 role=核心 的代码）
+    prev_core = {c for c in prev_scores if c in (core["fund_code"].astype(str).tolist())}
+
+    # 优先保留上次持仓中仍在候选集的基金（稳定性）；再用分差决定是否替换
+    selected_codes: list[str] = []
+    for _, row in core.iterrows():
+        code = str(row["fund_code"])
+        score = float(row.get("total_score", 0))
+        if len(selected_codes) < 3 and _should_replace(code, score, set(selected_codes), prev_scores, score_threshold):
+            selected_codes.append(code)
+        if len(selected_codes) >= 3:
+            break
+
+    # 若无法满足 3 只，直接取分数前 3
+    if len(selected_codes) < 3:
+        selected_codes = core.head(3)["fund_code"].astype(str).tolist()
+
+    picks = core[core["fund_code"].astype(str).isin(selected_codes)].head(3)
     n = len(picks)
     if n == 0:
         return []
-    weight = alloc / n  # 在选中的基金间等权分配，确保权重之和 = alloc
-    selected = []
+    weight = alloc / n
+    result = []
     for _, row in picks.iterrows():
-        selected.append({
-            "fund_code": row["fund_code"],
+        result.append({
+            "fund_code": str(row["fund_code"]),
             "fund_name": row.get("fund_name", row["fund_code"]),
             "signal": row.get("signal", "持有"),
             "score": row.get("total_score", 0),
             "weight": round(weight * 100, 1),
             "role": "核心",
         })
-    return selected
+    return result
 
 
-def _select_satellite_funds(df: pd.DataFrame, alloc: float, exclude_codes: set) -> list:
+def _select_satellite_funds(df: pd.DataFrame, alloc: float, exclude_codes: set,
+                             prev_scores: dict, score_threshold: float) -> list:
     sat = df[~df["fund_code"].isin(exclude_codes)]
-    # 优先主动QDII和行业主题
     active = sat[sat["fund_type"].str.contains("主动|LOF|行业|主题", na=False)]
     if active.empty:
         active = sat
 
-    candidates = active.head(2)
+    selected_codes: list[str] = []
+    for _, row in active.iterrows():
+        code = str(row["fund_code"])
+        score = float(row.get("total_score", 0))
+        if len(selected_codes) < 2 and _should_replace(code, score, set(selected_codes), prev_scores, score_threshold):
+            selected_codes.append(code)
+        if len(selected_codes) >= 2:
+            break
+
+    if len(selected_codes) < 2:
+        selected_codes = active.head(2)["fund_code"].astype(str).tolist()
+
+    candidates = active[active["fund_code"].astype(str).isin(selected_codes)].head(2)
     n = max(1, len(candidates))
-    selected = []
+    result = []
     for _, row in candidates.iterrows():
-        weight = alloc / n
-        selected.append({
-            "fund_code": row["fund_code"],
+        result.append({
+            "fund_code": str(row["fund_code"]),
             "fund_name": row.get("fund_name", row["fund_code"]),
             "signal": row.get("signal", "持有"),
             "score": row.get("total_score", 0),
-            "weight": round(weight * 100, 1),
+            "weight": round(alloc / n * 100, 1),
             "role": "卫星",
         })
-    return selected
+    return result
 
 
 def _generate_notes(market_signal: dict) -> list[str]:

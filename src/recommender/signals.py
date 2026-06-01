@@ -7,7 +7,7 @@ from ..analyzers.macro_analyzer import analyze_macro_cycle
 from ..analyzers.valuation import calculate_valuation_metrics
 from ..collectors.news_collector import get_market_sentiment
 from ..utils.config import load_config
-from ..analyzers.masters import graham, buffett, bogle, siegel, lynch
+from ..analyzers.narrative import generate_narrative
 
 
 def _credit_score() -> float:
@@ -108,19 +108,8 @@ def generate_market_signal(save: bool = True) -> dict:
         cash_alloc = 0.50
         signal_color = "red"
 
-    # 大师共识分析
     fund_list_data = _get_fund_list()
-    graham_analysis = graham.analyze(valuation, cfg)
-    buffett_analysis = buffett.analyze(valuation, sentiment, cfg)
-    bogle_analysis = bogle.analyze(fund_list_data, cfg)
-    lynch_analysis = lynch.analyze(cfg)
-    siegel_analysis = siegel.analyze(valuation, cfg)
-
-    master_avg_score = (
-        graham_analysis["score"] + buffett_analysis["score"]
-        + bogle_analysis["score"] + lynch_analysis["score"]
-        + siegel_analysis["score"]
-    ) / 5
+    narrative = generate_narrative(valuation, sentiment, fund_list_data, cfg)
 
     from ..utils import provenance
     data_source = provenance.overall_mode()
@@ -159,14 +148,7 @@ def generate_market_signal(save: bool = True) -> dict:
         "global_macro": global_macro,
         "valuation": valuation,
         "sentiment": sentiment,
-        "masters": {
-            "graham": graham_analysis,
-            "buffett": buffett_analysis,
-            "bogle": bogle_analysis,
-            "lynch": lynch_analysis,
-            "siegel": siegel_analysis,
-            "avg_score": round(master_avg_score, 2),
-        },
+        "narrative": narrative,
     }
 
     if save:

@@ -64,8 +64,34 @@ def overall_mode() -> str:
     return worst
 
 
+def check_staleness(max_days: dict | None = None) -> list[str]:
+    """检查各数据源的最后更新时间，返回超期警告列表。
+    max_days: {source: 最大允许天数}，默认 macro=7, market=3, fund=7, valuation=7。
+    """
+    import datetime
+    defaults = {"macro": 7, "market": 3, "fund": 7, "valuation": 7}
+    thresholds = {**defaults, **(max_days or {})}
+    meta = read_all()
+    warnings = []
+    now = datetime.datetime.utcnow()
+    for src, max_d in thresholds.items():
+        if src not in meta:
+            continue
+        updated_at = meta[src].get("updated_at")
+        if not updated_at:
+            continue
+        try:
+            last = datetime.datetime.fromisoformat(updated_at.replace("Z", ""))
+            delta = (now - last).days
+            if delta > max_d:
+                warnings.append(f"{src} 数据已 {delta} 天未更新（阈值 {max_d} 天）")
+        except Exception:
+            pass
+    return warnings
+
+
 def banner() -> str:
-    """给 CLI 用的一行数据真实性提示。"""
+    """给 CLI 用的一行数据真实性提示，包含过期警告。"""
     mode = overall_mode()
     meta = read_all()
     parts = []
@@ -73,9 +99,13 @@ def banner() -> str:
         if src in meta:
             parts.append(f"{src}={meta[src]['mode']}")
     detail = "  ".join(parts)
+
+    stale = check_staleness()
+    stale_str = ("  ⚠️ 过期警告: " + "; ".join(stale)) if stale else ""
+
     if mode == REAL:
-        return f"[数据来源] ✅ 全部真实数据  ({detail})"
+        return f"[数据来源] ✅ 全部真实数据  ({detail}){stale_str}"
     elif mode == PARTIAL:
-        return f"[数据来源] ⚠️ 部分真实/近似数据，谨慎参考  ({detail})"
+        return f"[数据来源] ⚠️ 部分真实/近似数据，谨慎参考  ({detail}){stale_str}"
     else:
-        return f"[数据来源] ❌ 含模拟数据，仅供界面演示、不可用于实际决策  ({detail})"
+        return f"[数据来源] ❌ 含模拟数据，仅供界面演示、不可用于实际决策  ({detail}){stale_str}"

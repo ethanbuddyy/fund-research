@@ -58,6 +58,7 @@ def run(args):
     sm    = result["strat_metrics"]
     spm   = result["sp500_metrics"]
     b6040 = result["b6040_metrics"]
+    ewbh  = result["ewbh_metrics"]
 
     print(f"\n  回测区间：{result['start_date']} ～ {result['end_date']}  ({result['n_periods']} 个调仓周期)")
 
@@ -70,9 +71,9 @@ def run(args):
 
     # ── 1. 绩效对比 ──────────────────────────────
     print_section("一、绩效对比")
-    header = f"  {'指标':12s}  {'本策略':>10s}  {'标普500':>10s}  {'60/40':>10s}"
+    header = f"  {'指标':12s}  {'本策略':>10s}  {'等权买持':>10s}  {'标普500':>10s}  {'60/40':>10s}"
     print(header)
-    print(f"  {'─'*12}  {'─'*10}  {'─'*10}  {'─'*10}")
+    print(f"  {'─'*12}  {'─'*10}  {'─'*10}  {'─'*10}  {'─'*10}")
     metrics_order = [
         ("累计收益%",      "total_return"),
         ("年化收益%",      "annualized_return"),
@@ -82,12 +83,14 @@ def run(args):
         ("月度胜率%",      "win_rate"),
     ]
     for label, key in metrics_order:
-        sv = sm[key]; spv = spm[key]; bv = b6040[key]
-        print(f"  {label:12s}  {sv:>+10.2f}  {spv:>+10.2f}  {bv:>+10.2f}")
+        sv = sm[key]; ev = ewbh[key]; spv = spm[key]; bv = b6040[key]
+        print(f"  {label:12s}  {sv:>+10.2f}  {ev:>+10.2f}  {spv:>+10.2f}  {bv:>+10.2f}")
 
-    alpha = sm["annualized_return"] - spm["annualized_return"]
-    print(f"\n  超额收益（vs SP500）：{alpha:+.2f}%/年")
-    print(f"  累计净值末值        ：策略={df['strat_cum'].iloc[-1]:.3f}  SP500={df['sp500_cum'].iloc[-1]:.3f}  60/40={df['b6040_cum'].iloc[-1]:.3f}")
+    alpha_vs_sp500 = sm["annualized_return"] - spm["annualized_return"]
+    alpha_vs_ewbh  = sm["annualized_return"] - ewbh["annualized_return"]
+    print(f"\n  超额收益（vs 等权买持）：{alpha_vs_ewbh:+.2f}%/年  ← 衡量择时+选基的综合贡献")
+    print(f"  超额收益（vs SP500）：  {alpha_vs_sp500:+.2f}%/年")
+    print(f"  累计净值：策略={df['strat_cum'].iloc[-1]:.3f}  等权={df['ewbh_cum'].iloc[-1]:.3f}  SP500={df['sp500_cum'].iloc[-1]:.3f}  60/40={df['b6040_cum'].iloc[-1]:.3f}")
 
     # ── 2. 信号有效性 ─────────────────────────────
     print_section("二、信号有效性验证（信号 → 次月市场方向）")
@@ -139,16 +142,18 @@ def run(args):
 
     # 主要问题诊断
     print("\n  诊断结论：")
-    if alpha < -5:
-        print("  [!] 策略显著跑输SP500，主因：")
+    if alpha_vs_ewbh < -3:
+        print(f"  [!] 策略跑输等权买持 {alpha_vs_ewbh:.1f}%/年，择时与选基综合未贡献价值")
         if n_def / total > 0.3:
-            print(f"      → 防守信号占比{n_def/total*100:.0f}%，持续踏空牛市")
+            print(f"      → 防守信号占比{n_def/total*100:.0f}%，持续踏空上涨行情")
         if avg_inv < 0.65:
             print(f"      → 平均仓位仅{avg_inv*100:.0f}%，现金拖累约{cash_drag:.1f}%/年")
-    elif alpha < 0:
-        print("  [△] 策略轻微跑输SP500，可通过调整CAPE阈值或降低现金上限改善")
+    elif alpha_vs_ewbh < 0:
+        print(f"  [△] 策略轻微跑输等权买持 {alpha_vs_ewbh:.1f}%/年，可调整CAPE阈值或降低现金上限")
     else:
-        print("  [✓] 策略跑赢SP500基准")
+        print(f"  [✓] 策略跑赢等权买持 {alpha_vs_ewbh:+.1f}%/年（信号有贡献）")
+    if alpha_vs_sp500 >= 0:
+        print(f"  [✓] 同时跑赢SP500基准 {alpha_vs_sp500:+.2f}%/年")
 
     # 信号方向有效性评价
     if not sig.empty and len(sig) >= 2:

@@ -33,9 +33,25 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _read_last_signal() -> str | None:
+    """从数据库读取上次保存的综合信号。"""
+    try:
+        from src.utils.database import get_connection
+        conn = get_connection()
+        cur = conn.execute(
+            "SELECT composite_signal FROM market_signals ORDER BY date DESC LIMIT 1"
+        )
+        row = cur.fetchone()
+        conn.close()
+        return row["composite_signal"] if row else None
+    except Exception:
+        return None
+
+
 def run_daily_update():
     logger.info("=" * 50)
     logger.info("开始每日数据更新...")
+    prev_signal = _read_last_signal()
 
     try:
         from src.utils.database import init_database
@@ -81,7 +97,26 @@ def run_daily_update():
         from src.recommender.scorer import score_all_funds
         signal = generate_market_signal()
         score_all_funds(signal)
-        logger.info(f"[5/5] 投资信号生成完成 → {signal.get('composite_signal', '—')}")
+        new_signal = signal.get("composite_signal", "—")
+        logger.info(f"[5/5] 投资信号生成完成 → {new_signal}")
+
+        # 信号档位变化通知
+        if prev_signal and prev_signal != new_signal:
+            logger.warning(
+                f"【信号变化】{prev_signal} → {new_signal}  "
+                f"CAPE={signal.get('cape', '—')}  VIX={signal.get('vix', '—')}  "
+                f"建议仓位：核心{signal.get('core_allocation', 0)*100:.0f}%"
+                f"/卫星{signal.get('satellite_allocation', 0)*100:.0f}%"
+                f"/现金{signal.get('cash_allocation', 0)*100:.0f}%"
+            )
+        elif not prev_signal:
+            logger.info(f"首次运行，基准信号设为：{new_signal}")
+
+        # 数据过期检查
+        from src.utils.provenance import check_staleness
+        stale = check_staleness()
+        for w in stale:
+            logger.warning(f"[数据过期] {w}")
 
         logger.info("每日数据更新完成！")
     except Exception as e:

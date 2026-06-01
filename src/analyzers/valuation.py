@@ -33,7 +33,9 @@ def calculate_valuation_metrics() -> dict:
         sp500_pe = _estimate_pe(sp500_df)
         pe_source = "estimated"
 
-    buffett_indicator = _estimate_buffett_indicator(sp500_df, gdp_df)
+    nominal_gdp_df = read_table("macro_data", "series_id = ? ORDER BY date DESC LIMIT 8", ("GDP",))
+    equity_cap_df  = read_table("macro_data", "series_id = ? ORDER BY date DESC LIMIT 8", ("NCBEILQ027S",))
+    buffett_indicator, buffett_source = _calc_buffett_indicator(equity_cap_df, nominal_gdp_df, sp500_df)
     treasury_yield = _get_latest_value(treasury_df) or 4.5
     equity_risk_premium = max(0, (1 / sp500_pe * 100) - treasury_yield) if sp500_pe > 0 else 0
 
@@ -54,7 +56,7 @@ def calculate_valuation_metrics() -> dict:
         "sp500_pe": round(sp500_pe, 2),
         "pe_source": pe_source,
         "buffett_indicator": round(buffett_indicator, 3),
-        "buffett_source": "estimated",  # 巴菲特指标仍为近似，明确标注
+        "buffett_source": buffett_source,
         "treasury_10y": round(treasury_yield, 2),
         "equity_risk_premium": round(equity_risk_premium, 2),
         "valuation_level": valuation_level,
@@ -127,16 +129,27 @@ def _estimate_pe(sp500_df: pd.DataFrame) -> float:
     return round(min(max(pe, 10), 40), 1)
 
 
-def _estimate_buffett_indicator(sp500_df: pd.DataFrame, gdp_df: pd.DataFrame) -> float:
-    """美股总市值/GDP 近似估算（标记为 estimated）。
-    校准基准：S&P500 5000点 ≈ 1.85。
+def _calc_buffett_indicator(equity_cap_df: pd.DataFrame, nominal_gdp_df: pd.DataFrame,
+                            sp500_df: pd.DataFrame) -> tuple[float, str]:
+    """巴菲特指标：美股权益总市值 / 名义GDP。
+    优先使用 FRED 真实数据（NCBEILQ027S / GDP，均为十亿美元）；
+    两个序列均可用时返回 ('real', value)，否则退回点位近似。
     """
+    if not equity_cap_df.empty and not nominal_gdp_df.empty:
+        equity_cap_df  = equity_cap_df.sort_values("date")
+        nominal_gdp_df = nominal_gdp_df.sort_values("date")
+        equity_val = float(equity_cap_df.iloc[-1]["value"])   # 十亿美元
+        gdp_val    = float(nominal_gdp_df.iloc[-1]["value"])  # 十亿美元，SAAR已年化
+        if gdp_val > 0 and equity_val > 0:
+            return round(equity_val / gdp_val, 3), "real"
+
+    # 回退：基于标普500点位的近似估算
     if sp500_df.empty:
-        return 1.85
-    sp500_df = sp500_df.sort_values("date")
+        return 1.85, "estimated"
+    sp500_df  = sp500_df.sort_values("date")
     sp500_level = float(sp500_df.iloc[-1]["close"])
     bi = 1.85 + (sp500_level - 5000) / 1000 * 0.18
-    return round(min(max(bi, 0.5), 4.0), 2)
+    return round(min(max(bi, 0.5), 4.0), 2), "estimated"
 
 
 def _get_latest_value(df: pd.DataFrame) -> float | None:

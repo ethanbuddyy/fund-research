@@ -44,7 +44,7 @@ def run_backtest(
     cfg = load_config()
     # 参数覆盖
     if cape_overvalued is not None:
-        cfg.setdefault("strategy_params", {}).setdefault("graham", {})["cape_overvalued"] = cape_overvalued
+        cfg.setdefault("strategy_params", {}).setdefault("valuation_thresholds", {})["cape_overvalued"] = cape_overvalued
 
     fund_nav   = read_table("fund_nav_history")
     market_db  = read_table("market_data")
@@ -79,6 +79,8 @@ def run_backtest(
         return {"error": f"回测区间过短（{len(rebalance_dates)} 个调仓日），至少需要 4 个月"}
 
     records = []
+    # 等权基准：全仓买入所有可用基金，不择时不择基，隔离"选基"vs"择时"贡献
+    ewbh_all_codes = fund_list["fund_code"].astype(str).tolist()
 
     for i in range(len(rebalance_dates) - 1):
         t0 = rebalance_dates[i]
@@ -112,15 +114,19 @@ def run_backtest(
         port_ret = _portfolio_period_return(fund_nav, selected_codes, t0, t1)
         strat_ret = port_ret * invested - (TRANSACTION_COST if i > 0 else 0)
 
-        # 基准收益
+        # 基准1：标普500买入持有
         sp500_ret = _index_period_return(sp500_full, t0, t1)
-        b6040_ret = sp500_ret * 0.6   # 60% SP500 + 40% 现金
+        # 基准2：60/40（标普500 60% + 现金 40%）
+        b6040_ret = sp500_ret * 0.6
+        # 基准3：等权全仓基金买入持有（无择时无择基，隔离信号贡献）
+        ewbh_ret  = _portfolio_period_return(fund_nav, ewbh_all_codes, t0, t1)
 
         records.append({
             "date":          t0,
             "strat_return":  strat_ret,
             "sp500_return":  sp500_ret,
             "b6040_return":  b6040_ret,
+            "ewbh_return":   ewbh_ret,
             "signal":        signal["composite_signal"],
             "composite_raw": round(signal["composite_raw"], 2),
             "cape":          round(signal["cape"], 1),
@@ -137,6 +143,7 @@ def run_backtest(
     df["strat_cum"]  = (1 + df["strat_return"]).cumprod()
     df["sp500_cum"]  = (1 + df["sp500_return"]).cumprod()
     df["b6040_cum"]  = (1 + df["b6040_return"]).cumprod()
+    df["ewbh_cum"]   = (1 + df["ewbh_return"]).cumprod()
 
     # 最大回撤序列（用于画图）
     df["strat_dd"]  = _drawdown_series(df["strat_cum"])
@@ -147,6 +154,7 @@ def run_backtest(
         "strat_metrics": calc_metrics(df["strat_return"],  "本策略（动态配置）"),
         "sp500_metrics": calc_metrics(df["sp500_return"],  "标普500（买入持有）"),
         "b6040_metrics": calc_metrics(df["b6040_return"],  "60/40 组合"),
+        "ewbh_metrics":  calc_metrics(df["ewbh_return"],   "等权基金买入持有"),
         "signal_stats":  _signal_accuracy(df),
         "start_date":    rebalance_dates[0].strftime("%Y-%m-%d"),
         "end_date":      rebalance_dates[-1].strftime("%Y-%m-%d"),
@@ -319,70 +327,131 @@ def _trend_from_snap(sp500_snap: pd.Series) -> float:
 
 def _score_funds(nav_snap: pd.DataFrame, fund_list: pd.DataFrame,
                  signal: dict, cfg: dict) -> pd.DataFrame:
-    weights = cfg.get("scoring_weights", {})
-    w_perf  = weights.get("performance",    0.25)
-    w_risk  = weights.get("risk_adjusted",  0.20)
-    w_strat = weights.get("strategy_match", 0.20)
-    w_time  = weights.get("market_timing",  0.20)
-    w_cost  = weights.get("cost_efficiency",0.15)
+    """类别相对化评分，与 scorer.py 保持同口径（去掉循环的 timing 因子）。"""
+    from ..utils.fund_universe import classify_asset_class, strategy_match_score
 
-    results = []
+    weights   = cfg.get("scoring_weights", {})
+    w_perf    = weights.get("performance",    0.30)
+    w_risk    = weights.get("risk_adjusted",  0.25)
+    w_strat   = weights.get("strategy_match", 0.20)
+    w_cost    = weights.get("cost_efficiency",0.15)
+    w_consist = weights.get("consistency",    0.10)
+
+    # Pass 1: 所有基金的原始指标
+    raw_rows = []
     for _, fund in fund_list.iterrows():
         code = str(fund["fund_code"])
         nav  = nav_snap[nav_snap["fund_code"] == code].sort_values("date")
         if len(nav) < 20:
             continue
-
         nav_s = nav.set_index("date")["nav"].astype(float)
-        perf  = _perf_score(nav_s)
-        risk  = _risk_score(nav_s)
-        strat = _strategy_score(fund, signal)
-        timing = signal["composite_raw"]
-        cost  = _cost_score(float(fund.get("expense_ratio") or 0.012), cfg)
+        perf_raw, ann_returns = _perf_raw(nav_s)
+        sharpe, mdd, vol      = _risk_raw(nav_s)
+        asset_class = classify_asset_class(
+            fund_code=code,
+            fund_type=str(fund.get("fund_type", "")),
+            fund_name=str(fund.get("fund_name", "")),
+            benchmark=str(fund.get("benchmark", "")),
+        )
+        raw_rows.append({
+            "fund_code":     code,
+            "fund_name":     str(fund.get("fund_name", code)),
+            "asset_class":   asset_class,
+            "perf_raw":      perf_raw,
+            "sharpe_raw":    sharpe,
+            "max_dd_raw":    mdd,
+            "vol_raw":       vol,
+            "expense_ratio": float(fund.get("expense_ratio") or 0.012),
+            "ann_returns":   ann_returns,
+        })
 
-        total = (perf * w_perf + risk * w_risk + strat * w_strat +
-                 timing * w_time + cost * w_cost) * 10
-
-        results.append({"fund_code": code, "fund_name": str(fund.get("fund_name", code)),
-                         "total_score": round(total, 1)})
-
-    if not results:
+    if not raw_rows:
         return pd.DataFrame(columns=["fund_code", "fund_name", "total_score"])
+
+    df_raw = pd.DataFrame(raw_rows)
+
+    # Pass 2: 类别内百分位（0–10）
+    df_raw["perf_pct"]   = _category_pct(df_raw, "perf_raw",  "asset_class", low_is_good=False)
+    df_raw["sharpe_pct"] = _category_pct(df_raw, "sharpe_raw","asset_class", low_is_good=False)
+    df_raw["dd_pct"]     = _category_pct(df_raw, "max_dd_raw","asset_class", low_is_good=False)
+    df_raw["vol_pct"]    = _category_pct(df_raw, "vol_raw",   "asset_class", low_is_good=True)
+
+    # Pass 3: 加权合并
+    composite = signal["composite_signal"]
+    results = []
+    for _, row in df_raw.iterrows():
+        perf_score    = row["perf_pct"]
+        risk_score    = row["sharpe_pct"] * 0.4 + row["dd_pct"] * 0.35 + row["vol_pct"] * 0.25
+        strat_score   = strategy_match_score(row["asset_class"], composite)
+        cost_score    = _cost_score(row["expense_ratio"], cfg)
+        consist_score = _consist_score(row["ann_returns"])
+
+        total = (perf_score  * w_perf + risk_score * w_risk + strat_score * w_strat
+                 + cost_score * w_cost + consist_score * w_consist) * 10
+        results.append({"fund_code": row["fund_code"], "fund_name": row["fund_name"],
+                        "total_score": round(total, 1)})
+
     return pd.DataFrame(results).sort_values("total_score", ascending=False).reset_index(drop=True)
 
 
-def _perf_score(nav_s: pd.Series) -> float:
-    # 与 scorer 同口径：各区间收益年化后对统一 20%/年 目标打分
+def _perf_raw(nav_s: pd.Series) -> tuple[float, list]:
+    """返回 (加权年化收益, 各期年化收益列表)，不做绝对分对比。"""
     today = nav_s.index[-1]
-    ws = 0.0; wt = 0.0
-    ANNUAL_TARGET = 20.0
-    for days, years, w in [(365, 1.0, 0.4), (365*3, 3.0, 0.35), (180, 0.5, 0.25)]:
+    periods = [(365, 1.0, 0.4), (365 * 3, 3.0, 0.35), (180, 0.5, 0.25)]
+    avail = []
+    for days, years, w in periods:
         cut = today - pd.Timedelta(days=days)
         sub = nav_s[nav_s.index >= cut]
         if len(sub) >= 2:
             growth = float(sub.iloc[-1]) / float(sub.iloc[0])
             ann = (growth ** (1.0 / years) - 1) * 100 if growth > 0 else -100.0
-            ws += min(10, max(0, ann / ANNUAL_TARGET * 10)) * w
-            wt += w
-    return ws / wt if wt > 0 else 5.0
+            avail.append((ann, w))
+    if not avail:
+        return 0.0, []
+    total_w = sum(w for _, w in avail)
+    perf_raw = sum(v * w for v, w in avail) / total_w
+    ann_list = [v for v, _ in avail]
+    return perf_raw, ann_list
 
 
-def _risk_score(nav_s: pd.Series) -> float:
+def _risk_raw(nav_s: pd.Series) -> tuple[float, float, float]:
+    """返回 (sharpe, max_drawdown%, volatility%)，原始值，不做归一化。"""
     daily = nav_s.pct_change().dropna()
     if len(daily) < 20:
-        return 5.0
-    rf = RF_ANNUAL / 252
+        return 0.0, -20.0, 20.0
+    rf     = RF_ANNUAL / 252
     excess = daily - rf
-    sharpe = (excess.mean() / excess.std() * np.sqrt(252)) if excess.std() > 0 else 0
+    sharpe = float(excess.mean() / excess.std() * np.sqrt(252)) if excess.std() > 0 else 0.0
     mdd    = float(((nav_s - nav_s.cummax()) / nav_s.cummax()).min()) * 100
     vol    = float(daily.std() * np.sqrt(252)) * 100
-    return (min(10, max(0, sharpe / 1.5 * 10)) * 0.4
-          + min(10, max(0, (1 - abs(mdd) / 50) * 10)) * 0.35
-          + min(10, max(0, (1 - vol / 40) * 10)) * 0.25)
+    return sharpe, mdd, vol
+
+
+def _consist_score(ann_returns: list) -> float:
+    """跨期收益稳定性（0–10），与 scorer._calc_consistency_score 同口径。"""
+    if len(ann_returns) < 2:
+        return 5.0
+    pos_ratio = sum(1 for v in ann_returns if v > 0) / len(ann_returns)
+    std = float(np.std(ann_returns))
+    return float(np.clip(pos_ratio * 7.0 + max(0.0, 1.0 - std / 30.0) * 3.0, 0.0, 10.0))
+
+
+def _category_pct(df: pd.DataFrame, col: str, group_col: str,
+                  low_is_good: bool = False, min_group: int = 3) -> pd.Series:
+    """类别内百分位排名（0–10）；类别过小时退回全局排名。"""
+    asc    = not low_is_good
+    result = pd.Series(0.0, index=df.index)
+    global_ranks = df[col].rank(pct=True, ascending=asc)
+    for _, idx in df.groupby(group_col).groups.items():
+        if len(idx) >= min_group:
+            ranks = df.loc[idx, col].rank(pct=True, ascending=asc)
+        else:
+            ranks = global_ranks.loc[idx]
+        result.loc[idx] = ranks * 10
+    return result.clip(0, 10)
 
 
 def _strategy_score(fund_row, signal: dict) -> float:
-    """与 scorer._calc_strategy_score 同口径：按资产类别匹配信号。"""
     from ..utils.fund_universe import classify_asset_class, strategy_match_score
     asset_class = classify_asset_class(
         fund_code=str(fund_row.get("fund_code", "")),
@@ -394,7 +463,7 @@ def _strategy_score(fund_row, signal: dict) -> float:
 
 
 def _cost_score(er: float, cfg: dict) -> float:
-    bp = cfg.get("strategy_params", {}).get("bogle", {})
+    bp = cfg.get("strategy_params", {}).get("cost_filter", {})
     pref = bp.get("preferred_expense_ratio", 0.005)
     mx   = bp.get("max_expense_ratio", 0.015)
     if er <= pref:  return 10.0
