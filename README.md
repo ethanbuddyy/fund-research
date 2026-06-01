@@ -71,7 +71,7 @@ multpl 估值           市场情绪(VIX)          大师策略共识
 
 | 数据 | 来源 | 需要 Key | 采集器 |
 |------|------|:--------:|--------|
-| 美国宏观(GDP/CPI/PCE/利率/失业/信用利差/曲线) | **FRED API** | ✅ 免费 | `macro_collector.py` |
+| 美国宏观(GDP/CPI/PCE/利率/失业/信用利差/曲线/**股权总市值**) | **FRED API** | ✅ 免费 | `macro_collector.py` |
 | 全球区域宏观(各国 GDP/通胀/失业) | **World Bank** | ❌ | `global_macro_collector.py` |
 | 领先指标 CLI | **OECD** | ❌(尽力而为) | `global_macro_collector.py` |
 | 市场行情(指数/VIX/商品/板块ETF) | **yfinance** | ❌ | `market_collector.py` |
@@ -83,9 +83,35 @@ multpl 估值           市场情绪(VIX)          大师策略共识
 
 **FRED Key**：免费申请 https://fred.stlouisfed.org/docs/api/api_key.html (限速 120次/分，本系统每次采集仅约 10 次请求)。配置见下。
 
+> **FRED 序列说明**：`wilshire5000` 使用 `NCBEILQ027S`（美联储 Flow of Funds 股权总市值，季度，百万美元），原 `WILL5000INDFC` 已从 FRED 下架。
+
 ---
 
-## 三、安装与使用
+## 三、MCP 决策分析扩展（Claude Code）
+
+本项目通过 `.mcp.json` 为 Claude Code 提供四个 MCP 服务器，增强对话式投资决策能力：
+
+| 服务器 | 工具数 | 用途 |
+|--------|--------|------|
+| `sequential-thinking` | 1 | Anthropic 官方：将复杂决策拆解为可审计的多步思维链 |
+| `yfinance-market` | 30 | 美股实时行情、财务报表、分析师评级、期权链、市场新闻 |
+| `technical-analysis` | 3 | 项目原生：RSI/MACD/布林带/均线，多标的技术指标横向对比 |
+| `stockreport` | — | A股/港股/美股 K线/财务/宏观/分红（Baostock + AkShare） |
+
+### 安装 MCP 扩展
+```bash
+# 安装 yfinance-market-mcp（PyPI）
+pip install yfinance-market-mcp "mcp[cli]"
+
+# 安装 stockreport-mcp（外部仓库，无需 API Key）
+bash tools/setup_mcp.sh
+```
+
+安装后在 Claude Code 中打开项目，接受提示即可使用所有 MCP 工具。
+
+---
+
+## 三（续）、安装与使用
 
 ### 安装
 ```bash
@@ -163,7 +189,11 @@ fund-research/
 │   └── utils/
 │       ├── config.py / database.py / provenance.py
 │       └── fund_universe.py          # 基金标的库 + 分类/去重规则
-└── tools/download_seed_data.py # 净值种子下载
+├── tools/
+│   ├── download_seed_data.py       # 净值种子下载
+│   ├── mcp_technical_analysis.py   # MCP 技术分析服务器（RSI/MACD/布林带）
+│   └── setup_mcp.sh                # MCP 扩展依赖安装脚本
+└── .mcp.json                       # Claude Code MCP 服务器配置
 ```
 
 ### 数据库表（SQLite，`data/fund_research.db`）
@@ -195,7 +225,7 @@ fund-research/
 | **基金池：宽基保底** | 当前按收益排序偏向高收益主动基金，可加「每地区至少保留 1 只宽基指数」规则 |
 | **基金池：规模过滤** | `min_aum_yi` 已占位，需用 pingzhongdata 规模历史富集后启用 AUM 硬过滤 |
 | **持仓接入打分** | `fund_holdings` 已落库真实行业暴露，可让策略匹配/卫星筛选用真实持仓(需处理回测口径一致) |
-| **巴菲特指标真实化** | 当前仍为点位近似(已标记 estimated)，可用 FRED Wilshire/GDP 计算真实值 |
+| **巴菲特指标真实化** | 分子已改用 FRED `NCBEILQ027S`（股权总市值）采集，计算逻辑仍为点位近似；可进一步用 NCBEILQ027S / GDPA 计算真实比值 |
 | **真实新闻情绪** | `news_collector` 现为 VIX 推导，可接 Finnhub 等真实新闻情绪 |
 | **回测幸存者偏差** | 纳入已清盘基金需历史成分数据；当前以披露为主 |
 | **全球宏观入信号** | 现为上下文/组合注记，若并入量化信号需历史全球宏观保证回测口径一致 |
@@ -208,4 +238,4 @@ fund-research/
 - **无前视偏差回测**：每个调仓日仅用截至该日的数据快照；真实 CAPE 按日期 as-of 引用。
 - **live 与回测同口径**：信号权重、策略匹配、年化口径在实时与回测中保持一致。
 - **时区**：调度器把北京时间 08:30 自动换算为系统本地时区。
-- **依赖**：pandas / numpy / yfinance / akshare / fredapi / requests / PyYAML / schedule / scipy。
+- **依赖**：pandas / numpy / yfinance / akshare / fredapi / requests / PyYAML / schedule / scipy / mcp[cli] / fastmcp / baostock（后三项为 MCP 扩展依赖，可选）。
