@@ -54,53 +54,10 @@ def run_daily_update():
     prev_signal = _read_last_signal()
 
     try:
-        from src.utils.database import init_database
-        init_database()
-
-        from src.collectors.macro_collector import collect_macro_data
-        collect_macro_data()
-        logger.info("[1/5] 宏观数据更新完成")
-
-        from src.collectors.global_macro_collector import collect_global_macro
-        collect_global_macro()
-        logger.info("[1.5/5] 全球宏观(World Bank/OECD)更新完成")
-
-        from src.collectors.market_collector import collect_market_data
-        collect_market_data()
-        logger.info("[2/5] 市场数据更新完成")
-
-        from src.collectors.fund_screener import screen_funds, save_pool
-        pool = screen_funds()
-        if pool:
-            save_pool(pool)
-            pool_codes = [p["fund_code"] for p in pool]
-            logger.info(f"[3/5] 规则筛选基金池完成：{len(pool)} 只")
-        else:
-            from src.collectors.fund_collector import collect_fund_data
-            collect_fund_data()
-            pool_codes = None
-            logger.info("[3/5] 基金数据更新完成（核心池）")
-
-        from src.collectors.eastmoney_collector import collect_eastmoney
-        collect_eastmoney(pool_codes)
-        logger.info("[3.2/5] 天天基金真实净值/持仓富集完成")
-
-        from src.collectors.valuation_collector import collect_valuation_data
-        collect_valuation_data()
-        logger.info("[3.5/5] 真实估值数据更新完成")
-
-        from src.analyzers.fund_analyzer import analyze_all_funds
-        analyze_all_funds()
-        logger.info("[4/5] 基金绩效分析完成")
-
-        from src.recommender.signals import generate_market_signal
-        from src.recommender.scorer import score_all_funds
-        signal = generate_market_signal()
-        score_all_funds(signal)
+        from src.application.update_pipeline import run_update
+        signal, scores_df, portfolio = run_update(logger=logger)
         new_signal = signal.get("composite_signal", "—")
-        logger.info(f"[5/5] 投资信号生成完成 → {new_signal}")
 
-        # 信号档位变化通知
         if prev_signal and prev_signal != new_signal:
             logger.warning(
                 f"【信号变化】{prev_signal} → {new_signal}  "
@@ -112,11 +69,17 @@ def run_daily_update():
         elif not prev_signal:
             logger.info(f"首次运行，基准信号设为：{new_signal}")
 
-        # 数据过期检查
         from src.utils.provenance import check_staleness
         stale = check_staleness()
         for w in stale:
             logger.warning(f"[数据过期] {w}")
+
+        try:
+            from src.reports.report_builder import build_report
+            report_path = build_report(signal, portfolio, scores_df=scores_df)
+            logger.info(f"[报告] 投研报告已生成：{report_path}")
+        except Exception as e:
+            logger.warning(f"[报告] 生成失败（不影响数据采集）：{e}")
 
         logger.info("每日数据更新完成！")
     except Exception as e:

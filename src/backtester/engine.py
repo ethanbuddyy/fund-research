@@ -12,6 +12,14 @@ import numpy as np
 from datetime import datetime
 from ..utils.database import read_table
 from ..utils.config import load_config
+from ..domain.scoring import (
+    category_percentile,
+    consistency_score,
+    cost_score,
+    classify_signal,
+    credit_score_from_spread,
+    trend_score_from_deviation,
+)
 
 
 # QDII ETF 场内双边摩擦（手续费+买卖价差+汇率）：实测约 0.3–0.5%，保守取 0.5%
@@ -247,10 +255,7 @@ def _compute_signal(sp500_snap: pd.Series, mkt_snap: pd.DataFrame,
     raw = (macro_adj * 0.20 + val_score * 0.20
            + contrarian * 0.15 + trend * 0.30 + credit * 0.15)
 
-    if   raw >= 7.0: sig = "重仓进取"; c, s, ca = 0.70, 0.25, 0.05
-    elif raw >= 5.0: sig = "标配稳健"; c, s, ca = 0.60, 0.30, 0.10
-    elif raw >= 3.0: sig = "谨慎防守"; c, s, ca = 0.50, 0.20, 0.30
-    else:            sig = "减仓防守"; c, s, ca = 0.35, 0.15, 0.50
+    sig, c, s, ca = classify_signal(raw)
 
     return {
         "composite_signal": sig, "composite_raw": raw,
@@ -306,32 +311,20 @@ def _fed_direction_from_snap(mac: pd.DataFrame) -> float:
 
 
 def _credit_from_snap(mac: pd.DataFrame) -> float:
-    """信用利差评分（与 signals._credit_score 同口径）。"""
     if mac.empty:
         return 5.0
     sub = mac[mac["series_id"] == "BAMLH0A0HYM2"].sort_values("date")
     if sub.empty:
         return 5.0
-    spread = float(sub.iloc[-1]["value"])
-    if   spread < 3.0: return 8.0
-    elif spread < 4.0: return 6.5
-    elif spread < 5.5: return 5.0
-    elif spread < 8.0: return 3.5
-    else:              return 2.0
+    return credit_score_from_spread(float(sub.iloc[-1]["value"]))
 
 
 def _trend_from_snap(sp500_snap: pd.Series) -> float:
-    """SP500 vs 12个月均线趋势评分（与 signals._trend_score 逻辑一致）。"""
     if len(sp500_snap) < 60:
         return 5.0
-    current  = float(sp500_snap.iloc[-1])
-    ma252    = float(sp500_snap.tail(252).mean())
-    dev      = (current - ma252) / ma252
-    if   dev >  0.08: return 8.0
-    elif dev >  0.02: return 6.5
-    elif dev > -0.02: return 5.0
-    elif dev > -0.08: return 3.5
-    else:             return 2.0
+    current = float(sp500_snap.iloc[-1])
+    ma252 = float(sp500_snap.tail(252).mean())
+    return trend_score_from_deviation((current - ma252) / ma252)
 
 
 # ─────────────────────────────────────────────
@@ -384,10 +377,10 @@ def _score_funds(nav_snap: pd.DataFrame, fund_list: pd.DataFrame,
     df_raw = pd.DataFrame(raw_rows)
 
     # Pass 2: 类别内百分位（0–10）
-    df_raw["perf_pct"]   = _category_pct(df_raw, "perf_raw",  "asset_class", low_is_good=False)
-    df_raw["sharpe_pct"] = _category_pct(df_raw, "sharpe_raw","asset_class", low_is_good=False)
-    df_raw["dd_pct"]     = _category_pct(df_raw, "max_dd_raw","asset_class", low_is_good=False)
-    df_raw["vol_pct"]    = _category_pct(df_raw, "vol_raw",   "asset_class", low_is_good=True)
+    df_raw["perf_pct"]   = category_percentile(df_raw, "perf_raw",  "asset_class", low_is_good=False)
+    df_raw["sharpe_pct"] = category_percentile(df_raw, "sharpe_raw","asset_class", low_is_good=False)
+    df_raw["dd_pct"]     = category_percentile(df_raw, "max_dd_raw","asset_class", low_is_good=False)
+    df_raw["vol_pct"]    = category_percentile(df_raw, "vol_raw",   "asset_class", low_is_good=True)
 
     # Pass 3: 加权合并
     composite = signal["composite_signal"]
@@ -396,11 +389,11 @@ def _score_funds(nav_snap: pd.DataFrame, fund_list: pd.DataFrame,
         perf_score    = row["perf_pct"]
         risk_score    = row["sharpe_pct"] * 0.4 + row["dd_pct"] * 0.35 + row["vol_pct"] * 0.25
         strat_score   = strategy_match_score(row["asset_class"], composite)
-        cost_score    = _cost_score(row["expense_ratio"], cfg)
-        consist_score = _consist_score(row["ann_returns"])
+        cost_score_val = cost_score(row["expense_ratio"], cfg)
+        consist_score = consistency_score(row["ann_returns"])
 
-        total = (perf_score  * w_perf + risk_score * w_risk + strat_score * w_strat
-                 + cost_score * w_cost + consist_score * w_consist) * 10
+        total = (perf_score    * w_perf + risk_score   * w_risk + strat_score * w_strat
+                 + cost_score_val * w_cost + consist_score * w_consist) * 10
         results.append({"fund_code": row["fund_code"], "fund_name": row["fund_name"],
                         "total_score": round(total, 1)})
 
@@ -440,30 +433,6 @@ def _risk_raw(nav_s: pd.Series) -> tuple[float, float, float]:
     return sharpe, mdd, vol
 
 
-def _consist_score(ann_returns: list) -> float:
-    """跨期收益稳定性（0–10），与 scorer._calc_consistency_score 同口径。"""
-    if len(ann_returns) < 2:
-        return 5.0
-    pos_ratio = sum(1 for v in ann_returns if v > 0) / len(ann_returns)
-    std = float(np.std(ann_returns))
-    return float(np.clip(pos_ratio * 7.0 + max(0.0, 1.0 - std / 30.0) * 3.0, 0.0, 10.0))
-
-
-def _category_pct(df: pd.DataFrame, col: str, group_col: str,
-                  low_is_good: bool = False, min_group: int = 3) -> pd.Series:
-    """类别内百分位排名（0–10）；类别过小时退回全局排名。"""
-    asc    = not low_is_good
-    result = pd.Series(0.0, index=df.index)
-    global_ranks = df[col].rank(pct=True, ascending=asc)
-    for _, idx in df.groupby(group_col).groups.items():
-        if len(idx) >= min_group:
-            ranks = df.loc[idx, col].rank(pct=True, ascending=asc)
-        else:
-            ranks = global_ranks.loc[idx]
-        result.loc[idx] = ranks * 10
-    return result.clip(0, 10)
-
-
 def _strategy_score(fund_row, signal: dict) -> float:
     from ..utils.fund_universe import classify_asset_class, strategy_match_score
     asset_class = classify_asset_class(
@@ -473,15 +442,6 @@ def _strategy_score(fund_row, signal: dict) -> float:
         benchmark=str(fund_row.get("benchmark", "")),
     )
     return strategy_match_score(asset_class, signal["composite_signal"])
-
-
-def _cost_score(er: float, cfg: dict) -> float:
-    bp = cfg.get("strategy_params", {}).get("cost_filter", {})
-    pref = bp.get("preferred_expense_ratio", 0.005)
-    mx   = bp.get("max_expense_ratio", 0.015)
-    if er <= pref:  return 10.0
-    if er <= mx:    return 10 - (er - pref) / (mx - pref) * 5
-    return max(0, 5 - (er - mx) * 100)
 
 
 # ─────────────────────────────────────────────

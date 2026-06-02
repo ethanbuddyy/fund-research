@@ -4,6 +4,7 @@ import numpy as np
 from ..utils.database import read_table, upsert_dataframe
 from ..utils.config import load_config
 from ..utils.fund_universe import classify_asset_class, strategy_match_score
+from ..domain.scoring import category_percentile, consistency_score, cost_score
 
 
 def score_all_funds(market_signal: dict) -> pd.DataFrame:
@@ -71,10 +72,10 @@ def score_all_funds(market_signal: dict) -> pd.DataFrame:
 
     # ── Pass 2: 类别内相对百分位（0–10）──────────────────────────
     # 绩效/夏普：越高越好；回撤（负数，越接近0越好）：越高越好；波动率：越低越好
-    df_raw["perf_pct"]   = _category_pct(df_raw, "perf_raw",  "asset_class", low_is_good=False)
-    df_raw["sharpe_pct"] = _category_pct(df_raw, "sharpe_raw","asset_class", low_is_good=False)
-    df_raw["dd_pct"]     = _category_pct(df_raw, "max_dd_raw","asset_class", low_is_good=False)
-    df_raw["vol_pct"]    = _category_pct(df_raw, "vol_raw",   "asset_class", low_is_good=True)
+    df_raw["perf_pct"]   = category_percentile(df_raw, "perf_raw",  "asset_class", low_is_good=False)
+    df_raw["sharpe_pct"] = category_percentile(df_raw, "sharpe_raw","asset_class", low_is_good=False)
+    df_raw["dd_pct"]     = category_percentile(df_raw, "max_dd_raw","asset_class", low_is_good=False)
+    df_raw["vol_pct"]    = category_percentile(df_raw, "vol_raw",   "asset_class", low_is_good=True)
 
     # ── Pass 3: 加权合并 ───────────────────────────────────────
     composite = market_signal.get("composite_signal", "标配稳健")
@@ -83,15 +84,15 @@ def score_all_funds(market_signal: dict) -> pd.DataFrame:
         perf_score     = row["perf_pct"]
         risk_score     = row["sharpe_pct"] * 0.4 + row["dd_pct"] * 0.35 + row["vol_pct"] * 0.25
         strategy_score = strategy_match_score(row["asset_class"], composite)
-        cost_score     = _calc_cost_score(row["expense_ratio"], cfg)
-        consist_score  = _calc_consistency_score(row["ann_1y"], row["ann_3y"], row["ann_6m"])
+        cost_score_val = cost_score(row["expense_ratio"], cfg)
+        consist_score  = consistency_score([row["ann_1y"], row["ann_3y"], row["ann_6m"]])
 
         total = (
-            perf_score     * w_perf
-            + risk_score   * w_risk
+            perf_score       * w_perf
+            + risk_score     * w_risk
             + strategy_score * w_strategy
-            + cost_score   * w_cost
-            + consist_score * w_consist
+            + cost_score_val * w_cost
+            + consist_score  * w_consist
         ) * 10
 
         signal, recommendation = _generate_signal(total, market_signal)
@@ -121,59 +122,6 @@ def _annualize(cum_return_pct: float, years: float) -> float:
     if growth <= 0:
         return -100.0
     return (growth ** (1.0 / years) - 1) * 100.0
-
-
-def _category_pct(df: pd.DataFrame, col: str, group_col: str,
-                  low_is_good: bool = False, min_group: int = 3) -> pd.Series:
-    """类别内百分位排名，映射到 0–10。
-    NaN 值（真正缺失数据）统一给 0 分，不参与有效排名竞争。
-    low_is_good=False → 越大越好；low_is_good=True → 越小越好。
-    类别内基金数 < min_group 时退回全局排名，避免单基金假满分。
-    """
-    asc = not low_is_good
-    result = pd.Series(0.0, index=df.index)
-    # na_option='bottom': NaN 排到最末，pct 排名最低
-    global_ranks = df[col].rank(pct=True, ascending=asc, na_option="bottom")
-
-    for _, idx in df.groupby(group_col).groups.items():
-        if len(idx) >= min_group:
-            ranks = df.loc[idx, col].rank(pct=True, ascending=asc, na_option="bottom")
-        else:
-            ranks = global_ranks.loc[idx]
-        result.loc[idx] = ranks * 10
-
-    # NaN 指标强制给 0（na_option='bottom' 已处理排名，但 NaN 位置在 result 中仍需清零）
-    result[df[col].isna()] = 0.0
-    return result.clip(0, 10)
-
-
-def _calc_consistency_score(ann_1y, ann_3y, ann_6m) -> float:
-    """跨期收益稳定性评分（0–10）。
-    基于已有期间数据，衡量正收益占比和期间离散度。
-    """
-    avail = [v for v in [ann_1y, ann_3y, ann_6m] if v is not None]
-    if len(avail) < 2:
-        return 5.0  # 数据不足 → 中性
-
-    pos_ratio = sum(1 for v in avail if v > 0) / len(avail)
-    std = float(np.std(avail))
-
-    # 正收益占比贡献 7 分，低离散度贡献 3 分
-    score = pos_ratio * 7.0 + max(0.0, 1.0 - std / 30.0) * 3.0
-    return float(np.clip(score, 0.0, 10.0))
-
-
-def _calc_cost_score(er: float, cfg: dict) -> float:
-    params = cfg.get("strategy_params", {}).get("cost_filter", {})
-    pref   = params.get("preferred_expense_ratio", 0.005)
-    max_er = params.get("max_expense_ratio", 0.015)
-
-    if er <= pref:
-        return 10.0
-    elif er <= max_er:
-        return 10.0 - (er - pref) / (max_er - pref) * 5.0
-    else:
-        return max(0.0, 5.0 - (er - max_er) * 100.0)
 
 
 def _generate_signal(score: float, market_signal: dict) -> tuple[str, str]:

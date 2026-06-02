@@ -1,57 +1,17 @@
-"""一键启动入口：初始化数据库 → 拉取数据"""
+"""一键启动入口：数据采集 → 信号生成 → 基金评分 → 组合推荐 → 投研报告"""
 import sys
 import os
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 
-def init():
+def main():
     print("=" * 60)
     print("  基金投资私人幕僚系统 — 启动中")
     print("=" * 60)
 
-    from src.utils.database import init_database
-    init_database()
-    print("[OK] 数据库初始化完成")
-
-
-def fetch_data():
-    print("\n[数据采集] 开始获取最新数据...")
-
-    from src.collectors.macro_collector import collect_macro_data
-    collect_macro_data()
-
-    from src.collectors.global_macro_collector import collect_global_macro
-    collect_global_macro()
-
-    from src.collectors.market_collector import collect_market_data
-    collect_market_data()
-
-    # 基金池：规则筛选优先（开启时），失败/禁用回退到核心列表
-    from src.collectors.fund_screener import screen_funds, save_pool
-    pool = screen_funds()
-    if pool:
-        save_pool(pool)
-        pool_codes = [p["fund_code"] for p in pool]
-    else:
-        from src.collectors.fund_collector import collect_fund_data
-        collect_fund_data()
-        pool_codes = None  # eastmoney 用默认核心列表
-
-    # 用天天基金 pingzhongdata 富集真实净值与持仓（覆盖 akshare/模拟净值）
-    from src.collectors.eastmoney_collector import collect_eastmoney
-    collect_eastmoney(pool_codes)
-
-    from src.collectors.valuation_collector import collect_valuation_data
-    collect_valuation_data()
-
-    from src.analyzers.fund_analyzer import analyze_all_funds
-    analyze_all_funds()
-
-    from src.recommender.signals import generate_market_signal
-    from src.recommender.scorer import score_all_funds
-    signal = generate_market_signal()
-    score_all_funds(signal)
+    from src.application.update_pipeline import run_update
+    signal, scores_df, portfolio = run_update()
 
     from src.utils import provenance
     print()
@@ -60,10 +20,20 @@ def fetch_data():
     print(f"\n[信号] 综合市场信号：{signal.get('composite_signal', '—')}")
     print(f"  经济周期：{signal.get('macro_cycle', '—')}")
     print(f"  估值水位：{signal.get('valuation_level', '—')}")
-    print(f"  建议仓位：核心{signal.get('core_allocation', 0)*100:.0f}% | 卫星{signal.get('satellite_allocation', 0)*100:.0f}% | 现金{signal.get('cash_allocation', 0)*100:.0f}%")
-    return signal
+    print(
+        f"  建议仓位：核心{signal.get('core_allocation', 0)*100:.0f}%"
+        f" | 卫星{signal.get('satellite_allocation', 0)*100:.0f}%"
+        f" | 现金{signal.get('cash_allocation', 0)*100:.0f}%"
+    )
+
+    # 生成 Markdown 投研报告
+    try:
+        from src.reports.report_builder import build_report
+        report_path = build_report(signal, portfolio, scores_df=scores_df)
+        print(f"\n[报告] 投研报告已生成：{report_path}")
+    except Exception as e:
+        print(f"\n[警告] 报告生成失败（数据采集流程不受影响）：{e}")
 
 
 if __name__ == "__main__":
-    init()
-    fetch_data()
+    main()
