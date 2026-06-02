@@ -121,3 +121,21 @@ strategy_params:
 # ── 换仓阈值（防止因细微分差频繁调仓）──────────────────
 rebalancing:
   score_threshold: 10    # 新推荐基金须比当前持仓高出此分数才触发换仓建议
+
+# ── 用户个人化配置（可选）───────────────────────────────
+# 调整市场信号给出的仓位建议，使其符合个人风险偏好与投资期限。
+# 留空（注释掉整个 user_profile 块）则使用信号档位的默认比例。
+user_profile:
+  risk_tolerance: "moderate"       # 风险偏好：conservative / moderate / aggressive
+                                   #   conservative → 在信号基础上降 ~10% 权益
+                                   #   aggressive   → 在信号基础上升 ~10% 权益
+  investment_horizon_years: 10     # 投资期限（年）：<3 额外降 10%、3-5 额外降 5% 权益
+  max_equity_pct: 0.90             # 权益仓位硬上限（核心+卫星合计），默认 90%
+  min_cash_pct: 0.05               # 现金仓位硬下限，默认 5%
+
+# ── 风险管理（组合级止损）───────────────────────────────
+# 追踪假设持仓的加权净值，从历史高水位回撤超过阈值时强制降至"减仓防守"。
+# 依赖 data/portfolio_snapshot.json（上次推荐的持仓权重+净值）自动更新。
+risk_management:
+  stop_loss_pct: 0.0               # 止损阈值（小数）：0.15 = 回撤超 15% 触发，0 = 禁用
+  # 建议值：激进投资者 0.20，稳健 0.15，保守 0.10

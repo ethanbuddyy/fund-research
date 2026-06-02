@@ -63,9 +63,39 @@ def run_update(logger=None) -> dict:
     from src.recommender.signals import generate_market_signal
     from src.recommender.scorer import score_all_funds
     from src.recommender.portfolio import build_portfolio_recommendation
+    from src.utils.config import load_config
     signal = generate_market_signal()
     scores_df = score_all_funds(signal)
     portfolio = build_portfolio_recommendation(signal)
     _log(f"[5/5] 投资信号生成完成 → {signal.get('composite_signal', '—')}")
+
+    # ── 组合浮亏追踪 + 止损检测（基于上次快照，需在 build_portfolio 之后）
+    cfg = load_config()
+    stop_loss_pct = float((cfg.get("risk_management") or {}).get("stop_loss_pct") or 0)
+    stop_loss_info = None
+    if stop_loss_pct > 0:
+        try:
+            from src.utils.portfolio_tracker import update_and_check
+            stop_loss_info = update_and_check(stop_loss_pct)
+            if stop_loss_info.get("triggered"):
+                # 强制降至"减仓防守"档，覆盖信号和组合仓位
+                signal["composite_signal"] = "减仓防守"
+                signal["core_allocation"] = 0.35
+                signal["satellite_allocation"] = 0.15
+                signal["cash_allocation"] = 0.50
+                signal["stop_loss_triggered"] = True
+                _log(
+                    f"[⚠️ 止损] 组合回撤 {stop_loss_info['drawdown_pct']:.1f}% "
+                    f"超过阈值 {stop_loss_pct*100:.0f}%，强制降仓至减仓防守"
+                )
+            else:
+                _log(
+                    f"[止损] 组合净值 {stop_loss_info['portfolio_nav']:.2f}"
+                    f"（高水位 {stop_loss_info['high_water_mark']:.2f}）"
+                    f"，回撤 {stop_loss_info['drawdown_pct']:.1f}%，未触发"
+                )
+        except Exception as e:
+            _log(f"[止损] 浮亏追踪失败（不影响主流程）: {e}")
+    signal["stop_loss"] = stop_loss_info
 
     return signal, scores_df, portfolio

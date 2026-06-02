@@ -76,6 +76,20 @@ def build_portfolio_recommendation(market_signal: dict, top_n: int = 10) -> dict
     return portfolio
 
 
+def _extract_scores(bucket: dict) -> dict[str, float]:
+    """从快照 bucket 中提取 {code: score}，兼容新格式 {code: dict} 和旧格式 {code: float}。"""
+    result = {}
+    for code, val in (bucket or {}).items():
+        if isinstance(val, dict):
+            result[code] = float(val.get("score", 0.0))
+        else:
+            try:
+                result[code] = float(val)
+            except (TypeError, ValueError):
+                result[code] = 0.0
+    return result
+
+
 def _load_previous_codes() -> tuple[dict[str, float], dict[str, float]]:
     """读取上次推荐组合，返回 (core_scores, satellite_scores) 两个 {code: score} 字典。
     首次运行或文件缺失/格式旧版时返回两个空字典（不触发门槛约束）。
@@ -84,20 +98,50 @@ def _load_previous_codes() -> tuple[dict[str, float], dict[str, float]]:
         if _SNAPSHOT_PATH.exists():
             raw = json.loads(_SNAPSHOT_PATH.read_text(encoding="utf-8"))
             if isinstance(raw, dict) and "core" in raw and "satellite" in raw:
-                return raw["core"], raw["satellite"]
-            # 旧格式 {code: score}，无法区分角色，视为首次运行
+                return _extract_scores(raw["core"]), _extract_scores(raw["satellite"])
         return {}, {}
     except Exception:
         return {}, {}
 
 
-def _save_portfolio_snapshot(core_funds: list, satellite_funds: list, scores_df: pd.DataFrame):
-    """将本次实际推荐的基金代码+评分（按角色分组）写入快照。"""
+def _get_latest_navs(fund_codes: list) -> dict:
+    """从 fund_nav_history 查各基金最新净值，用于快照记录（止损追踪基准）。"""
     try:
+        from ..utils.database import get_connection
+        conn = get_connection()
+        nav_map = {}
+        for code in fund_codes:
+            row = conn.execute(
+                "SELECT nav FROM fund_nav_history WHERE fund_code=? ORDER BY date DESC LIMIT 1",
+                (code,),
+            ).fetchone()
+            if row and row[0] is not None:
+                nav_map[code] = float(row[0])
+        conn.close()
+        return nav_map
+    except Exception:
+        return {}
+
+
+def _save_portfolio_snapshot(core_funds: list, satellite_funds: list, scores_df: pd.DataFrame):
+    """将本次推荐的基金代码+评分+权重+净值写入快照（止损追踪与换仓门槛共用）。"""
+    try:
+        from datetime import datetime as _dt
         score_map = dict(zip(scores_df["fund_code"].astype(str), scores_df["total_score"].astype(float)))
+        all_codes = [f["fund_code"] for f in core_funds + satellite_funds]
+        nav_map = _get_latest_navs(all_codes)
+
+        def _info(f):
+            return {
+                "score": score_map.get(f["fund_code"], 0.0),
+                "weight_pct": f.get("weight", 0.0),   # 已是 pct（如 20.0 表示 20%）
+                "nav": nav_map.get(f["fund_code"]),    # 快照时点净值，止损追踪基准
+            }
+
         snapshot = {
-            "core": {f["fund_code"]: score_map.get(f["fund_code"], 0.0) for f in core_funds},
-            "satellite": {f["fund_code"]: score_map.get(f["fund_code"], 0.0) for f in satellite_funds},
+            "date": _dt.now().strftime("%Y-%m-%d"),
+            "core": {f["fund_code"]: _info(f) for f in core_funds},
+            "satellite": {f["fund_code"]: _info(f) for f in satellite_funds},
         }
         _SNAPSHOT_PATH.write_text(json.dumps(snapshot, ensure_ascii=False), encoding="utf-8")
     except Exception:

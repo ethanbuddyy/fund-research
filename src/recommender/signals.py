@@ -8,7 +8,9 @@ from ..analyzers.valuation import calculate_valuation_metrics
 from ..collectors.news_collector import get_market_sentiment
 from ..utils.config import load_config
 from ..analyzers.narrative import generate_narrative
-from ..domain.scoring import classify_signal, credit_score_from_spread, trend_score_from_deviation
+from ..domain.scoring import (
+    classify_signal, credit_score_from_spread, trend_score_from_deviation, apply_user_profile,
+)
 
 
 def _credit_score() -> float:
@@ -60,6 +62,25 @@ def generate_market_signal(save: bool = True) -> dict:
     )
 
     composite_signal, core_alloc, satellite_alloc, cash_alloc = classify_signal(composite_raw)
+
+    # 用户个人化调整（risk_tolerance / investment_horizon_years / 上下界）
+    user_profile = cfg.get("user_profile") or {}
+    user_profile_applied = False
+    if user_profile:
+        adj_core, adj_sat, adj_cash = apply_user_profile(
+            core_alloc, satellite_alloc, cash_alloc, user_profile
+        )
+        if (adj_core, adj_sat, adj_cash) != (core_alloc, satellite_alloc, cash_alloc):
+            print(
+                f"[用户偏好] {user_profile.get('risk_tolerance','moderate')} / "
+                f"{user_profile.get('investment_horizon_years',10)}年 → "
+                f"核心 {core_alloc*100:.0f}%→{adj_core*100:.0f}%  "
+                f"卫星 {satellite_alloc*100:.0f}%→{adj_sat*100:.0f}%  "
+                f"现金 {cash_alloc*100:.0f}%→{adj_cash*100:.0f}%"
+            )
+        core_alloc, satellite_alloc, cash_alloc = adj_core, adj_sat, adj_cash
+        user_profile_applied = True
+
     _signal_colors = {"重仓进取": "green", "标配稳健": "blue", "谨慎防守": "orange", "减仓防守": "red"}
     signal_color = _signal_colors[composite_signal]
 
@@ -94,6 +115,11 @@ def generate_market_signal(save: bool = True) -> dict:
         "core_allocation": core_alloc,
         "satellite_allocation": satellite_alloc,
         "cash_allocation": cash_alloc,
+        "user_profile_applied": user_profile_applied,
+        "user_profile": {
+            k: user_profile.get(k)
+            for k in ("risk_tolerance", "investment_horizon_years", "max_equity_pct", "min_cash_pct")
+        } if user_profile_applied else None,
         "timing_score": composite_raw,
         "trend_score": round(trend_score, 2),
         "credit_score": round(credit_score, 2),

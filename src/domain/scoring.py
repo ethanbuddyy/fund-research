@@ -80,6 +80,49 @@ def classify_signal(composite_raw: float) -> tuple[str, float, float, float]:
         return "减仓防守", 0.35, 0.15, 0.50
 
 
+def apply_user_profile(
+    core: float, satellite: float, cash: float, profile: dict
+) -> tuple[float, float, float]:
+    """根据用户风险偏好/投资期限调整信号档位的仓位建议。
+
+    调整逻辑：
+      1. risk_tolerance 决定权益整体偏移量（conservative -10%、aggressive +10%）
+      2. investment_horizon_years < 5 再额外收紧（-5% 或 -10%）
+      3. 按当前 core:satellite 比例拆分偏移量，保持相对结构
+      4. 强制满足 max_equity_pct 上限和 min_cash_pct 下限，最后归一化
+
+    Returns:
+        (adjusted_core, adjusted_satellite, adjusted_cash) 三者之和为 1.0
+    """
+    if not profile:
+        return core, satellite, cash
+
+    risk = (profile.get("risk_tolerance") or "moderate").lower()
+    horizon = float(profile.get("investment_horizon_years") or 10)
+    max_equity = float(profile.get("max_equity_pct") or 0.90)
+    min_cash = float(profile.get("min_cash_pct") or 0.05)
+
+    equity_shift = {"conservative": -0.10, "moderate": 0.0, "aggressive": 0.10}.get(risk, 0.0)
+    if horizon < 3:
+        equity_shift -= 0.10
+    elif horizon < 5:
+        equity_shift -= 0.05
+
+    equity = core + satellite
+    equity_new = float(np.clip(equity + equity_shift, 0.0, max_equity))
+    ratio = (core / equity) if equity > 0 else 0.6
+    adj_core = equity_new * ratio
+    adj_sat = equity_new * (1 - ratio)
+    adj_cash = max(min_cash, 1.0 - equity_new)
+
+    total = adj_core + adj_sat + adj_cash
+    return (
+        round(adj_core / total, 3),
+        round(adj_sat / total, 3),
+        round(adj_cash / total, 3),
+    )
+
+
 def credit_score_from_spread(spread: float) -> float:
     """高收益债利差 → 信用评分（0–10）。"""
     if spread < 3.0:
