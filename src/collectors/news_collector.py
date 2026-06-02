@@ -121,16 +121,15 @@ def _fetch_alphavantage(api_key: str, today: str) -> dict | None:
             print("[WARN] Alpha Vantage 返回空 feed")
             return None
 
-        # 过滤低相关文章，加权平均 overall_sentiment_score
-        scores, weights = [], []
+        # relevance_score 在 ticker_sentiment 子项中，文章层面不存在；
+        # 已通过 topics 参数过滤，直接使用全部文章，等权平均。
+        scores = []
         bullish_n = bearish_n = neutral_n = 0
         for article in feed:
-            rel = float(article.get("relevance_score", 0) or 0)
-            if rel < 0.3:
+            raw = article.get("overall_sentiment_score")
+            if raw is None:
                 continue
-            raw = float(article.get("overall_sentiment_score", 0) or 0)
-            scores.append(raw)
-            weights.append(rel)
+            scores.append(float(raw))
             label = article.get("overall_sentiment_label", "")
             if "Bullish" in label:
                 bullish_n += 1
@@ -143,9 +142,8 @@ def _fetch_alphavantage(api_key: str, today: str) -> dict | None:
             print("[WARN] Alpha Vantage 过滤后无有效文章")
             return None
 
-        # 加权平均分（-1~+1）→ bullish_pct（0~1）
-        total_w  = sum(weights)
-        avg_score = sum(s * w for s, w in zip(scores, weights)) / total_w
+        # 等权平均分（-1~+1）→ bullish_pct（0~1）
+        avg_score = sum(scores) / len(scores)
         bullish_pct = (avg_score + 1.0) / 2.0
 
         # news_score：多头占比 0.7 + 有情绪文章占比 0.3
