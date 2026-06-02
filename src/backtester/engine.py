@@ -14,8 +14,10 @@ from ..utils.database import read_table
 from ..utils.config import load_config
 
 
-TRANSACTION_COST = 0.001   # 0.1% 单边（QDII ETF申赎成本）
-RF_ANNUAL = 0.02           # 无风险利率假设 2%
+# QDII ETF 场内双边摩擦（手续费+买卖价差+汇率）：实测约 0.3–0.5%，保守取 0.5%
+# 开放式 QDII（申购1%+赎回0.5%）更高；此处统一按场内 ETF 保守估算
+TRANSACTION_COST_RT = 0.005  # 0.5% 双边（round-trip），按实际换手率扩展
+RF_ANNUAL = 0.02             # 无风险利率假设 2%
 
 
 # ─────────────────────────────────────────────
@@ -81,6 +83,7 @@ def run_backtest(
     records = []
     # 等权基准：全仓买入所有可用基金，不择时不择基，隔离"选基"vs"择时"贡献
     ewbh_all_codes = fund_list["fund_code"].astype(str).tolist()
+    prev_selected: set[str] = set()   # 上期持仓，用于计算换手率
 
     for i in range(len(rebalance_dates) - 1):
         t0 = rebalance_dates[i]
@@ -109,10 +112,20 @@ def run_backtest(
             signal["core_allocation"] += overflow * 0.67
             signal["satellite_allocation"] += overflow * 0.33
 
-        # 策略收益 = 基金组合收益 × 投资仓位 − 交易成本
+        # 换手率驱动的交易成本：首期全部买入（turnover=1），后续按新旧持仓差异比例
+        cur_set = set(selected_codes)
+        if i == 0:
+            turnover = 1.0
+        else:
+            n_total = max(len(cur_set | prev_selected), 1)
+            n_changed = len(cur_set.symmetric_difference(prev_selected))
+            turnover = n_changed / n_total
+        prev_selected = cur_set
+
+        # 策略收益 = 基金组合收益 × 投资仓位 − 摩擦成本（按换手率加权）
         invested = signal["core_allocation"] + signal["satellite_allocation"]
         port_ret = _portfolio_period_return(fund_nav, selected_codes, t0, t1)
-        strat_ret = port_ret * invested - (TRANSACTION_COST if i > 0 else 0)
+        strat_ret = port_ret * invested - TRANSACTION_COST_RT * turnover * invested
 
         # 基准1：标普500买入持有
         sp500_ret = _index_period_return(sp500_full, t0, t1)

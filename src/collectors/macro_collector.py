@@ -66,7 +66,15 @@ def collect_macro_data() -> dict[str, pd.DataFrame]:
 
         if results:
             _save_macro(results)
-            provenance.record("macro", provenance.REAL, _count_rows(results), "FRED API")
+            # 信号模型的关键序列：缺失任一降级为 PARTIAL
+            _CRITICAL = {"GDPC1", "FEDFUNDS", "BAMLH0A0HYM2"}
+            missing = _CRITICAL - set(results.keys())
+            if missing:
+                print(f"[WARN] 关键宏观序列缺失: {', '.join(sorted(missing))}，相关因子将回退默认值")
+                provenance.record("macro", provenance.PARTIAL, _count_rows(results),
+                                  f"FRED API（缺失关键序列: {', '.join(sorted(missing))}）")
+            else:
+                provenance.record("macro", provenance.REAL, _count_rows(results), "FRED API")
         else:
             results = _generate_mock_macro()
             _save_macro(results)

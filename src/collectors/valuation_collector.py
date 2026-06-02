@@ -1,11 +1,10 @@
 """采集真实市场估值数据（Shiller CAPE、标普500 P/E）。
 
-数据源：multpl.com 公开月度表（基于 Robert Shiller 数据集），无需 API Key。
-解析不依赖 bs4，用正则容错提取，任何失败都安全降级（valuation.py 会回退到
-基于点位的近似估算，并把来源标记为 estimated）。
+数据源优先级：
+  1. multpl.com 月度表（Shiller CAPE + S&P500 P/E，无需 API Key）
+  2. yfinance SPY trailingPE（multpl.com 不可达时备用，仅有 PE，无 CAPE）
 
-这是修复「估值指标全是标普点位线性函数」的核心：CAPE 用真实的10年平滑实际
-盈利计算，不再随价格机械变动。
+两个路径均失败时降级为 estimated（valuation.py 会回退基于点位的近似估算）。
 """
 import re
 import pandas as pd
@@ -31,33 +30,64 @@ _ROW_RE = re.compile(
 def collect_valuation_data() -> dict:
     """抓取真实 CAPE / PE 月度序列，存入 valuation_data 表。
 
-    返回 {metric: rows_saved}。无网络/解析失败时返回空 dict 并记 partial。
+    返回 {metric: rows_saved}。无网络/解析失败时尝试 yfinance 备用，
+    两者均失败时返回空 dict 并记 partial。
     """
     try:
         import requests
+        has_requests = True
     except ImportError:
-        provenance.record("valuation", provenance.PARTIAL, 0, "requests 未安装，估值用近似")
-        return {}
+        has_requests = False
 
     saved = {}
-    for metric, url in _MULTPL.items():
-        try:
-            resp = requests.get(url, headers=_HEADERS, timeout=15)
-            resp.raise_for_status()
-            series = _parse_multpl_table(resp.text)
-            if series:
-                _save_valuation(metric, series, source="multpl")
-                saved[metric] = len(series)
-                print(f"[OK] 估值数据 {metric}: {len(series)} 条（multpl，最新 {series[0][0]}={series[0][1]}）")
-        except Exception as e:
-            print(f"[WARN] 估值 {metric} 获取失败: {e}")
+
+    if has_requests:
+        for metric, url in _MULTPL.items():
+            try:
+                resp = requests.get(url, headers=_HEADERS, timeout=15)
+                resp.raise_for_status()
+                series = _parse_multpl_table(resp.text)
+                if series:
+                    _save_valuation(metric, series, source="multpl")
+                    saved[metric] = len(series)
+                    print(f"[OK] 估值数据 {metric}: {len(series)} 条"
+                          f"（multpl，最新 {series[0][0]}={series[0][1]}）")
+            except Exception as e:
+                print(f"[WARN] 估值 {metric} 获取失败: {e}")
+
+    # multpl.com 至少拿到 CAPE 和 PE 其中之一算作真实数据
+    if "cape" in saved and "sp500_pe" in saved:
+        provenance.record("valuation", provenance.REAL, sum(saved.values()), "multpl.com")
+        return saved
+
+    # 备用：yfinance SPY trailingPE（仅提供 PE，无历史 CAPE）
+    if "sp500_pe" not in saved:
+        yf_saved = _collect_pe_via_yfinance()
+        saved.update(yf_saved)
 
     if saved:
-        # CAPE 与 PE 至少拿到其一就算真实估值可用
-        provenance.record("valuation", provenance.REAL, sum(saved.values()), "multpl.com")
+        source_label = "multpl.com(CAPE) + yfinance(PE)" if "cape" in saved else "yfinance(PE only)"
+        provenance.record("valuation", provenance.PARTIAL, sum(saved.values()), source_label)
     else:
         provenance.record("valuation", provenance.PARTIAL, 0, "估值源不可达，回退点位近似")
     return saved
+
+
+def _collect_pe_via_yfinance() -> dict:
+    """通过 yfinance 获取 SPY 的 trailingPE 作为 sp500_pe 的单点备用。"""
+    try:
+        import yfinance as yf
+        spy = yf.Ticker("SPY")
+        info = spy.info
+        pe = info.get("trailingPE") or info.get("forwardPE")
+        if pe and float(pe) > 0:
+            today = datetime.now().strftime("%Y-%m-%d")
+            _save_valuation("sp500_pe", [(today, float(pe))], source="yfinance")
+            print(f"[OK] 估值数据 sp500_pe (yfinance 备用): {pe:.2f}")
+            return {"sp500_pe": 1}
+    except Exception as e:
+        print(f"[WARN] yfinance 估值 fallback 失败: {e}")
+    return {}
 
 
 def _parse_multpl_table(html: str) -> list:
@@ -70,7 +100,6 @@ def _parse_multpl_table(html: str) -> list:
             rows.append((d, float(val_raw)))
         except ValueError:
             continue
-    # 去重并按日期降序
     seen = set()
     uniq = []
     for d, v in sorted(rows, key=lambda x: x[0], reverse=True):

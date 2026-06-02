@@ -1,7 +1,11 @@
 """投资组合构建与建议"""
+import json
 import pandas as pd
+from pathlib import Path
 from ..utils.database import read_table
 from ..utils.config import load_config
+
+_SNAPSHOT_PATH = Path(__file__).parent.parent.parent / "data" / "portfolio_snapshot.json"
 
 
 CORE_BENCHMARKS = ["标普500", "S&P", "纳斯达克100", "MSCI全球", "全球"]
@@ -27,14 +31,14 @@ def build_portfolio_recommendation(market_signal: dict, top_n: int = 10) -> dict
     cash_alloc = market_signal.get("cash_allocation", 0.10)
 
     score_threshold = cfg.get("rebalancing", {}).get("score_threshold", 10)
-    prev_codes = _load_previous_codes()
+    prev_core_scores, prev_sat_scores = _load_previous_codes()
 
     # 核心仓位：宽基指数
-    core_funds = _select_core_funds(merged, core_alloc, prev_codes, score_threshold)
+    core_funds = _select_core_funds(merged, core_alloc, prev_core_scores, score_threshold)
     # 卫星仓位：行业/主动/主题
     satellite_funds = _select_satellite_funds(merged, satellite_alloc,
                                               exclude_codes={f["fund_code"] for f in core_funds},
-                                              prev_codes=prev_codes,
+                                              prev_scores=prev_sat_scores,
                                               score_threshold=score_threshold)
 
     total_invested = core_alloc + satellite_alloc
@@ -49,60 +53,100 @@ def build_portfolio_recommendation(market_signal: dict, top_n: int = 10) -> dict
         "top_picks": merged.head(top_n).to_dict("records"),
         "investment_notes": _generate_notes(market_signal),
     }
+
+    # ── AI 阶段二：投资决策增强（配置开关控制）──────────
+    cfg_ai = cfg.get("ai_analysis", {})
+    if cfg_ai.get("enabled", False) and market_signal.get("ai_analysis") is not None:
+        try:
+            from ..ai.phase2_portfolio_advisor import PortfolioAdvisor
+            ai_decision = PortfolioAdvisor().advise(
+                market_signal=market_signal,
+                ai_phase1=market_signal["ai_analysis"],
+                portfolio=portfolio,
+            )
+            if ai_decision:
+                notes = ai_decision.get("position_sizing_notes")
+                if notes:
+                    portfolio["investment_notes"] = notes
+                portfolio["ai_decision"] = ai_decision
+        except Exception as e:
+            print(f"[AI Phase2] 跳过: {e}")
+
+    _save_portfolio_snapshot(core_funds, satellite_funds, merged[["fund_code", "total_score"]])
     return portfolio
 
 
-def _load_previous_codes() -> dict[str, float]:
-    """读取上次组合建议的基金代码 → 分数映射，用于换仓门槛判断。"""
-    try:
-        prev = read_table("fund_scores")
-        if prev.empty:
-            return {}
-        return dict(zip(prev["fund_code"].astype(str), prev["total_score"].astype(float)))
-    except Exception:
-        return {}
-
-
-def _should_replace(new_code: str, new_score: float,
-                    current_codes: set, prev_scores: dict,
-                    score_threshold: float) -> bool:
-    """新候选基金是否值得替换已有持仓。
-    若当前槽位已由本基金占据，无条件保留；
-    若新基金高出所有当前持仓至少 score_threshold 分，才触发替换建议。
+def _load_previous_codes() -> tuple[dict[str, float], dict[str, float]]:
+    """读取上次推荐组合，返回 (core_scores, satellite_scores) 两个 {code: score} 字典。
+    首次运行或文件缺失/格式旧版时返回两个空字典（不触发门槛约束）。
     """
-    if new_code in current_codes:
-        return True
-    if not current_codes:
-        return True
-    current_scores = [prev_scores.get(c, 0) for c in current_codes]
-    max_current = max(current_scores) if current_scores else 0
-    return new_score >= max_current + score_threshold
+    try:
+        if _SNAPSHOT_PATH.exists():
+            raw = json.loads(_SNAPSHOT_PATH.read_text(encoding="utf-8"))
+            if isinstance(raw, dict) and "core" in raw and "satellite" in raw:
+                return raw["core"], raw["satellite"]
+            # 旧格式 {code: score}，无法区分角色，视为首次运行
+        return {}, {}
+    except Exception:
+        return {}, {}
+
+
+def _save_portfolio_snapshot(core_funds: list, satellite_funds: list, scores_df: pd.DataFrame):
+    """将本次实际推荐的基金代码+评分（按角色分组）写入快照。"""
+    try:
+        score_map = dict(zip(scores_df["fund_code"].astype(str), scores_df["total_score"].astype(float)))
+        snapshot = {
+            "core": {f["fund_code"]: score_map.get(f["fund_code"], 0.0) for f in core_funds},
+            "satellite": {f["fund_code"]: score_map.get(f["fund_code"], 0.0) for f in satellite_funds},
+        }
+        _SNAPSHOT_PATH.write_text(json.dumps(snapshot, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
 
 
 def _select_core_funds(df: pd.DataFrame, alloc: float,
                        prev_scores: dict, score_threshold: float) -> list:
+    """选取核心仓位（宽基指数，最多3只）。
+
+    首次运行（prev_scores 为空）：直接取分数前3。
+    后续运行：
+      1. 保留上次核心持仓中仍在候选池的基金（不需要超越门槛）；
+      2. 空余槽位用当前最高分的新基金填满（无门槛要求）；
+      3. 若3只槽位均由旧持仓占据，新基金需比最低分旧持仓高出
+         score_threshold 分才能发生替换。
+    """
     core = df[df["fund_name"].str.contains("|".join(CORE_BENCHMARKS), na=False)]
     if core.empty:
         core = df[df["fund_type"].str.contains("ETF|指数|被动", na=False)]
 
-    # 当前核心持仓（上次建议中 role=核心 的代码）
-    prev_core = {c for c in prev_scores if c in (core["fund_code"].astype(str).tolist())}
+    candidate_codes = core["fund_code"].astype(str).tolist()  # 已按 total_score 降序
 
-    # 优先保留上次持仓中仍在候选集的基金（稳定性）；再用分差决定是否替换
-    selected_codes: list[str] = []
-    for _, row in core.iterrows():
-        code = str(row["fund_code"])
-        score = float(row.get("total_score", 0))
-        if len(selected_codes) < 3 and _should_replace(code, score, set(selected_codes), prev_scores, score_threshold):
-            selected_codes.append(code)
-        if len(selected_codes) >= 3:
-            break
+    if not prev_scores:
+        selected = candidate_codes[:3]
+    else:
+        # 保留上次持仓中仍在候选池的基金
+        selected: list[str] = [c for c in prev_scores if c in candidate_codes][:3]
+        # 遍历高分候选：补齐空位或尝试替换最低分旧持仓
+        for code in candidate_codes:
+            if len(selected) >= 3 and code in selected:
+                continue
+            if code in selected:
+                continue
+            score_series = core.loc[core["fund_code"].astype(str) == code, "total_score"]
+            if score_series.empty:
+                continue
+            score = float(score_series.iloc[0])
+            if len(selected) < 3:
+                selected.append(code)
+            else:
+                min_code = min(selected, key=lambda c: prev_scores.get(c, 0.0))
+                if score >= prev_scores.get(min_code, 0.0) + score_threshold:
+                    selected.remove(min_code)
+                    selected.append(code)
+            if len(selected) >= 3:
+                break
 
-    # 若无法满足 3 只，直接取分数前 3
-    if len(selected_codes) < 3:
-        selected_codes = core.head(3)["fund_code"].astype(str).tolist()
-
-    picks = core[core["fund_code"].astype(str).isin(selected_codes)].head(3)
+    picks = core[core["fund_code"].astype(str).isin(selected)].head(3)
     n = len(picks)
     if n == 0:
         return []
@@ -112,8 +156,15 @@ def _select_core_funds(df: pd.DataFrame, alloc: float,
         result.append({
             "fund_code": str(row["fund_code"]),
             "fund_name": row.get("fund_name", row["fund_code"]),
+            "fund_type": row.get("fund_type", ""),
             "signal": row.get("signal", "持有"),
             "score": row.get("total_score", 0),
+            "performance_score": row.get("performance_score"),
+            "risk_score": row.get("risk_score"),
+            "strategy_score": row.get("strategy_score"),
+            "consistency_score": row.get("consistency_score"),
+            "cost_score": row.get("cost_score"),
+            "expense_ratio": row.get("expense_ratio"),
             "weight": round(weight * 100, 1),
             "role": "核心",
         })
@@ -122,32 +173,51 @@ def _select_core_funds(df: pd.DataFrame, alloc: float,
 
 def _select_satellite_funds(df: pd.DataFrame, alloc: float, exclude_codes: set,
                              prev_scores: dict, score_threshold: float) -> list:
+    """选取卫星仓位（行业/主动/主题，最多2只），换仓逻辑同核心。"""
     sat = df[~df["fund_code"].isin(exclude_codes)]
     active = sat[sat["fund_type"].str.contains("主动|LOF|行业|主题", na=False)]
     if active.empty:
         active = sat
 
-    selected_codes: list[str] = []
-    for _, row in active.iterrows():
-        code = str(row["fund_code"])
-        score = float(row.get("total_score", 0))
-        if len(selected_codes) < 2 and _should_replace(code, score, set(selected_codes), prev_scores, score_threshold):
-            selected_codes.append(code)
-        if len(selected_codes) >= 2:
-            break
+    candidate_codes = active["fund_code"].astype(str).tolist()
 
-    if len(selected_codes) < 2:
-        selected_codes = active.head(2)["fund_code"].astype(str).tolist()
+    if not prev_scores:
+        selected = candidate_codes[:2]
+    else:
+        selected: list[str] = [c for c in prev_scores if c in candidate_codes][:2]
+        for code in candidate_codes:
+            if code in selected:
+                continue
+            score_series = active.loc[active["fund_code"].astype(str) == code, "total_score"]
+            if score_series.empty:
+                continue
+            score = float(score_series.iloc[0])
+            if len(selected) < 2:
+                selected.append(code)
+            else:
+                min_code = min(selected, key=lambda c: prev_scores.get(c, 0.0))
+                if score >= prev_scores.get(min_code, 0.0) + score_threshold:
+                    selected.remove(min_code)
+                    selected.append(code)
+            if len(selected) >= 2:
+                break
 
-    candidates = active[active["fund_code"].astype(str).isin(selected_codes)].head(2)
+    candidates = active[active["fund_code"].astype(str).isin(selected)].head(2)
     n = max(1, len(candidates))
     result = []
     for _, row in candidates.iterrows():
         result.append({
             "fund_code": str(row["fund_code"]),
             "fund_name": row.get("fund_name", row["fund_code"]),
+            "fund_type": row.get("fund_type", ""),
             "signal": row.get("signal", "持有"),
             "score": row.get("total_score", 0),
+            "performance_score": row.get("performance_score"),
+            "risk_score": row.get("risk_score"),
+            "strategy_score": row.get("strategy_score"),
+            "consistency_score": row.get("consistency_score"),
+            "cost_score": row.get("cost_score"),
+            "expense_ratio": row.get("expense_ratio"),
             "weight": round(alloc / n * 100, 1),
             "role": "卫星",
         })

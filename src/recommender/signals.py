@@ -151,6 +151,25 @@ def generate_market_signal(save: bool = True) -> dict:
         "narrative": narrative,
     }
 
+    # ── AI 阶段一：市场上下文分析（配置开关控制）──────────
+    ai_analysis = None
+    cfg_ai = cfg.get("ai_analysis", {})
+    if cfg_ai.get("enabled", False):
+        skip_mock = cfg_ai.get("skip_on_mock_data", True)
+        if not (skip_mock and data_source == "mock"):
+            try:
+                from ..ai.phase1_market_analyzer import MarketContextAnalyzer
+                ai_analysis = MarketContextAnalyzer().analyze(signal)
+                if ai_analysis:
+                    signal["narrative"] = {
+                        "insights": [ai_analysis.get("market_narrative", "")],
+                        "ai_enhanced": True,
+                        "source": "claude_phase1",
+                    }
+            except Exception as e:
+                print(f"[AI Phase1] 跳过: {e}")
+    signal["ai_analysis"] = ai_analysis
+
     if save:
         _save_signal(signal)
     return signal

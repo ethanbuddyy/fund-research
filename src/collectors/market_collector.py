@@ -56,6 +56,15 @@ def collect_market_data() -> dict[str, pd.DataFrame]:
         results = _generate_mock_market(all_symbols)
         mode, detail = provenance.MOCK, "yfinance 全部获取失败"
 
+    # 信号模型关键标的：缺失任一降级为 PARTIAL
+    if mode == provenance.REAL:
+        _CRITICAL_SYMBOLS = {"^GSPC", "^VIX"}
+        missing_sym = _CRITICAL_SYMBOLS - set(results.keys())
+        if missing_sym:
+            print(f"[WARN] 关键市场标的缺失: {', '.join(sorted(missing_sym))}，趋势/情绪因子将回退默认值")
+            mode = provenance.PARTIAL
+            detail = f"yfinance（缺失关键标的: {', '.join(sorted(missing_sym))}）"
+
     _save_market(results)
     provenance.record("market", mode, sum(len(df) for df in results.values()), detail)
     return results

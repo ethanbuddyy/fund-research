@@ -45,14 +45,19 @@ def score_all_funds(market_signal: dict) -> pd.DataFrame:
         total_w = sum(w for _, w in avail)
         perf_raw = sum(v * w for v, w in avail) / total_w if avail else 0.0
 
+        # 用 NaN 标记真正缺失的指标，让类别内百分位排名自动排除它们；
+        # 有值（包括合法的 0 / 负数）才转为 float。
+        def _to_float_or_nan(v):
+            return float(v) if pd.notna(v) and v is not None else float("nan")
+
         raw_rows.append({
             "fund_code":     code,
             "fund_name":     str(row.get("fund_name", code)),
             "asset_class":   asset_class,
-            "perf_raw":      perf_raw,
-            "sharpe_raw":    float(row.get("sharpe_ratio") or 0),
-            "max_dd_raw":    float(row.get("max_drawdown") or -20),
-            "vol_raw":       float(row.get("volatility") or 20),
+            "perf_raw":      perf_raw if avail else float("nan"),
+            "sharpe_raw":    _to_float_or_nan(row.get("sharpe_ratio")),
+            "max_dd_raw":    _to_float_or_nan(row.get("max_drawdown")),
+            "vol_raw":       _to_float_or_nan(row.get("volatility")),
             "expense_ratio": float(row.get("expense_ratio") or 0.012),
             "ann_1y": ann_1y,
             "ann_3y": ann_3y,
@@ -121,25 +126,24 @@ def _annualize(cum_return_pct: float, years: float) -> float:
 def _category_pct(df: pd.DataFrame, col: str, group_col: str,
                   low_is_good: bool = False, min_group: int = 3) -> pd.Series:
     """类别内百分位排名，映射到 0–10。
-    low_is_good=False → 越大越好（收益/夏普/回撤数值）。
-    low_is_good=True  → 越小越好（波动率/费率）。
+    NaN 值（真正缺失数据）统一给 0 分，不参与有效排名竞争。
+    low_is_good=False → 越大越好；low_is_good=True → 越小越好。
     类别内基金数 < min_group 时退回全局排名，避免单基金假满分。
     """
-    # ascending=True: 最小值排名1, 最大值排名n, pct: 最大→1.0
-    # ascending=False: 最大值排名1, 最小值排名n, pct: 最小→1.0
-    # low_is_good=False → 高分有利 → ascending=True → 高值→高pct ✓
-    # low_is_good=True  → 低值有利 → ascending=False → 低值→高pct ✓
     asc = not low_is_good
     result = pd.Series(0.0, index=df.index)
-    global_ranks = df[col].rank(pct=True, ascending=asc)
+    # na_option='bottom': NaN 排到最末，pct 排名最低
+    global_ranks = df[col].rank(pct=True, ascending=asc, na_option="bottom")
 
     for _, idx in df.groupby(group_col).groups.items():
         if len(idx) >= min_group:
-            ranks = df.loc[idx, col].rank(pct=True, ascending=asc)
+            ranks = df.loc[idx, col].rank(pct=True, ascending=asc, na_option="bottom")
         else:
             ranks = global_ranks.loc[idx]
         result.loc[idx] = ranks * 10
 
+    # NaN 指标强制给 0（na_option='bottom' 已处理排名，但 NaN 位置在 result 中仍需清零）
+    result[df[col].isna()] = 0.0
     return result.clip(0, 10)
 
 
