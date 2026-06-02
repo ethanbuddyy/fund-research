@@ -314,14 +314,17 @@ def save_pool(pool: list):
     conn = get_connection()
     try:
         conn.executemany(
-            """INSERT INTO fund_list (fund_code, fund_name, fund_type, expense_ratio, benchmark, updated_at)
-               VALUES (?, ?, ?, ?, ?, datetime('now'))
+            """INSERT INTO fund_list (fund_code, fund_name, fund_type, expense_ratio,
+                                      benchmark, inception_date, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
                ON CONFLICT(fund_code) DO UPDATE SET
                  fund_name=excluded.fund_name, fund_type=excluded.fund_type,
                  expense_ratio=excluded.expense_ratio, benchmark=excluded.benchmark,
+                 inception_date=COALESCE(excluded.inception_date, fund_list.inception_date),
                  updated_at=excluded.updated_at""",
             [(p["fund_code"], p["fund_name"], p.get("fund_type", "QDII"),
-              p.get("expense_ratio"), p.get("benchmark", "")) for p in pool],
+              p.get("expense_ratio"), p.get("benchmark", ""),
+              p.get("inception_date")) for p in pool],
         )
         conn.commit()
     finally:

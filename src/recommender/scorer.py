@@ -3,7 +3,9 @@ import pandas as pd
 import numpy as np
 from ..utils.database import read_table, upsert_dataframe
 from ..utils.config import load_config
-from ..utils.fund_universe import classify_asset_class, strategy_match_score
+from ..utils.fund_universe import (
+    classify_asset_class, strategy_match_score, holdings_adjusted_strategy_score,
+)
 from ..domain.scoring import category_percentile, consistency_score, cost_score
 
 
@@ -23,6 +25,27 @@ def score_all_funds(market_signal: dict) -> pd.DataFrame:
 
     merged = (funds.merge(perf_df, on="fund_code", how="left")
               if not perf_df.empty else funds.copy())
+
+    # 加载持仓数据（best-effort）：fund_holdings 按基金取最新一条
+    holdings_map: dict[str, dict] = {}
+    try:
+        holdings_df = read_table("fund_holdings")
+        if not holdings_df.empty:
+            for _, row in (
+                holdings_df.sort_values("date")
+                .groupby("fund_code")
+                .last()
+                .reset_index()
+                .iterrows()
+            ):
+                code = str(row["fund_code"])
+                holdings_map[code] = {
+                    "stock_ratio": row.get("stock_ratio"),
+                    "bond_ratio":  row.get("bond_ratio"),
+                    "cash_ratio":  row.get("cash_ratio"),
+                }
+    except Exception:
+        pass
 
     # ── Pass 1: 计算所有基金的原始指标 ────────────────────────────
     raw_rows = []
@@ -83,7 +106,12 @@ def score_all_funds(market_signal: dict) -> pd.DataFrame:
     for _, row in df_raw.iterrows():
         perf_score     = row["perf_pct"]
         risk_score     = row["sharpe_pct"] * 0.4 + row["dd_pct"] * 0.35 + row["vol_pct"] * 0.25
-        strategy_score = strategy_match_score(row["asset_class"], composite)
+        # 策略匹配：有持仓数据时用真实持仓精修（70% 资产类别 + 30% 持仓适配）
+        h = holdings_map.get(row["fund_code"], {})
+        strategy_score = holdings_adjusted_strategy_score(
+            row["asset_class"], composite,
+            h.get("stock_ratio"), h.get("bond_ratio"), h.get("cash_ratio"),
+        )
         cost_score_val = cost_score(row["expense_ratio"], cfg)
         consist_score  = consistency_score([row["ann_1y"], row["ann_3y"], row["ann_6m"]])
 

@@ -757,6 +757,53 @@ def _s9_backtest(backtest: Optional[dict], signal: dict) -> str:
 
     surv_note = f"\n> ⚠️ **幸存者偏差**：{surv}" if surv else ""
 
+    # ── 幸存者偏差修正对照组 ──────────────────────────────────────
+    surv_corr_md = ""
+    corrected = backtest.get("corrected_strat_metrics")
+    surv_stats = backtest.get("survivorship_stats", {})
+    if corrected:
+        bias = (sm.get("annualized_return", 0) or 0) - (corrected.get("annualized_return", 0) or 0)
+        avg_premature = surv_stats.get("avg_premature_per_period", 0)
+        surv_corr_md = f"""### 幸存者偏差修正对照
+
+> 修正方法：在每个调仓日仅允许使用**成立日期 ≤ 调仓日**的基金参与评分选股，
+> 排除当时尚未成立但事后出现在基金池中的基金（平均每期剔除 {avg_premature:.1f} 只）。
+
+| 指标 | 原始策略 | 幸存者修正策略 | 偏差溢价 |
+|---|---|---|---|
+| 年化收益 | {_pct(sm.get('annualized_return'), 2)} | {_pct(corrected.get('annualized_return'), 2)} | {_pct(bias, 2)}/年 |
+| 夏普比率 | {_num(sm.get('sharpe_ratio'), '.3f')} | {_num(corrected.get('sharpe_ratio'), '.3f')} | — |
+| 最大回撤 | {_pct(sm.get('max_drawdown'), 2)} | {_pct(corrected.get('max_drawdown'), 2)} | — |
+
+> 偏差溢价 > 0 表示原始回测因纳入「事后才成立的优质基金」而高估了策略收益。
+> 修正后结果更贴近真实可交易环境的历史表现。"""
+
+    # ── 因子归因分析（如随 run.py --backtest 一同返回则展示）──────
+    factor_attr_md = ""
+    attr = backtest.get("factor_attribution")
+    if attr and "factors" in attr:
+        base_ann = attr.get("base_annual_return", 0)
+        rows = [
+            "### 因子归因分析（逐因子屏蔽实验）",
+            "",
+            f"> 基准策略（6因子全开）年化收益：**{_pct(base_ann, 2)}**",
+            "> 贡献 = 基准年化 − 屏蔽后年化（正值：该因子有益；负值：该因子拖累）",
+            "",
+            "| 因子 | 原权重 | 屏蔽后年化 | 边际贡献 | 评级 |",
+            "|---|---|---|---|---|",
+        ]
+        for fname, info in sorted(
+            attr["factors"].items(), key=lambda x: -x[1]["contribution_pct"]
+        ):
+            rows.append(
+                f"| {info['label']} "
+                f"| {info['base_weight']*100:.1f}% "
+                f"| {_pct(info['ablated_annual'], 2)} "
+                f"| {_pct(info['contribution_pct'], 2)} "
+                f"| {info['contribution_label']} |"
+            )
+        factor_attr_md = "\n".join(rows)
+
     return f"""## 九、回测与策略验证
 
 **数据来源：** {ds_label}　　**回测周期：** {start} ～ {end}
@@ -764,9 +811,13 @@ def _s9_backtest(backtest: Optional[dict], signal: dict) -> str:
 
 {perf_table}
 
+{surv_corr_md}
+
 {sig_md}
 
 {annual_md}
+
+{factor_attr_md}
 
 > 回测结论仅供参考，不构成投资建议。历史绩效不代表未来表现。"""
 

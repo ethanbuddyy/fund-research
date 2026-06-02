@@ -169,9 +169,11 @@ python run.py
 python scheduler.py
 python scheduler.py --once    # 立即执行一次
 
-# 单独回测（结果可手动贴入报告的第九章）
-python backtest.py                                    # 默认参数
+# 单独回测（含幸存者偏差修正对照组）
+python backtest.py                                    # 默认参数（自动运行修正对照组）
 python backtest.py --top 8 --freq Q --cash 10         # 调参
+python backtest.py --attribution                      # 因子归因分析（约10-15分钟）
+python backtest.py --no-correction                    # 关闭幸存者偏差修正对照组
 
 # 工具
 python tools/download_seed_data.py   # 一次性下载基金净值种子 CSV
@@ -295,6 +297,10 @@ fund-research/
 - ✅ **基金元数据核对**（2026-06-02）：25 只核心库基金逐一核验；519977 长信全球债券确认为 QDII 债券基金（`bond`），非可转债；费率来源基金合同，不含申购费
 - ✅ **个人化输入**：`config/settings.yaml` 新增 `user_profile` 块（risk_tolerance / investment_horizon_years / 仓位上下界）；`apply_user_profile()` 在信号档位基础上叠加偏移，conservative 降 ~10% 权益、aggressive 升 ~10%，短期投资者额外收紧；调整明细在 CLI 打印并写入报告
 - ✅ **回撤止损机制**：`portfolio_tracker.py` 追踪假设持仓的加权累计净值（初始 100），与历史高水位比较；`risk_management.stop_loss_pct` 超阈值时强制信号降至"减仓防守"（核心 35% / 卫星 15% / 现金 50%）；快照增加 weight_pct + nav 字段供追踪用
+- ✅ **全球宏观并入量化信号**（第6因子）：`compute_global_macro_score()` 对 World Bank GDP/通胀/失业 + OECD CLI 按 QDII 资产规模权重（美国40%/全球20%/…）加权，得到 0-10 评分；6因子权重：趋势27%+宏观18%+估值18%+情绪13.5%+信用13.5%+全球宏观10%；回测引擎同步更新，无前视偏差
+- ✅ **信号组件归因**（逐因子屏蔽回测）：`run_factor_attribution()` 对 6 个因子逐一置 0（权重重分配至其余因子），对比基准年化收益与屏蔽后年化，量化每因子边际贡献；`python backtest.py --attribution` 触发，结果注入报告第九章
+- ✅ **持仓接入打分**：`holdings_adjusted_strategy_score()` 用 fund_holdings 的真实股票/债券/现金仓位精修策略匹配分（70% 资产类别基础分 + 30% 持仓适配分）；无数据时自动退回原行为；回测引擎与生产评分口径一致
+- ✅ **回测幸存者偏差修正**：成立日期保存至 fund_list；每个调仓日 t0 仅允许使用成立日期 ≤ t0 的基金参与对照组评分；返回修正后年化/夏普/回撤，量化偏差溢价（原始 − 修正 = 乐观高估量）；`--no-correction` 可关闭
 
 ---
 
@@ -302,10 +308,7 @@ fund-research/
 
 | 方向 | 说明 |
 |------|------|
-| **信号组件归因** | 回测仅测整体策略；可轮流屏蔽单个因子（趋势/估值/宏观/情绪/信用），量化各组件对超额收益的贡献 |
-| **持仓接入打分** | `fund_holdings` 已落库真实行业暴露，可让策略匹配/卫星筛选用真实持仓(需处理回测口径一致) |
-| **回测幸存者偏差** | 纳入已清盘基金需历史成分数据；当前以披露为主 |
-| **全球宏观入信号** | 现为上下文/组合注记，若并入量化信号需历史全球宏观保证回测口径一致 |
+| **回测幸存者偏差（完整修复）** | 已清盘基金需历史成分数据；当前修正了"尚未成立"偏差，已清盘基金仍以披露为主（外部数据源缺失） |
 
 ---
 

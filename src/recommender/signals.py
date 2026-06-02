@@ -40,25 +40,34 @@ def generate_market_signal(save: bool = True) -> dict:
 
     # 各维度得分
     macro_score      = macro.get("cycle_score", 5)
-    fed_direction    = macro.get("fed_direction_score", 0.0)   # 新增：利率方向
+    fed_direction    = macro.get("fed_direction_score", 0.0)
     valuation_score  = valuation.get("valuation_score", 5)
     sentiment_score  = sentiment.get("score", 50) / 10         # 0-100 → 0-10
     contrarian       = 10 - sentiment_score                    # 逆向情绪
     trend_score      = _trend_score()                          # 价格趋势
-    credit_score     = _credit_score()                         # 新增：独立信用利差因子
+    credit_score     = _credit_score()                         # 信用利差（独立因子）
 
     # 宏观分叠加利率方向修正（上限10，下限1）
     macro_adj = float(np.clip(macro_score + fed_direction, 1, 10))
 
-    # 去相关后的权重：宏观20% + 估值20% + 逆向情绪15% + 趋势30% + 信用15%。
-    # 估值现为真实CAPE（不再是价格的线性函数），叠加独立的信用因子，
-    # 把"纯标普价格/波动"驱动占比从约80%降到约45%。
+    # 第6因子：全球宏观综合评分（QDII资产规模权重的跨区域加权）
+    try:
+        from ..analyzers.global_macro_analyzer import compute_global_macro_score
+        global_macro_score = compute_global_macro_score(global_macro)
+    except Exception:
+        global_macro_score = 5.0
+
+    # 6因子权重（原5因子各×0.90，全球宏观新增10%）：
+    #   趋势27% + 宏观18% + 估值18% + 情绪13.5% + 信用13.5% + 全球宏观10%
+    # 设计要点：全球宏观以年度World Bank+月度OECD CLI为基础，数据独立于美股价格；
+    # 并入后"纯标普价格/波动"驱动占比进一步降至约40%。
     composite_raw = (
-        macro_adj         * 0.20
-        + valuation_score * 0.20
-        + contrarian      * 0.15
-        + trend_score     * 0.30
-        + credit_score    * 0.15
+        macro_adj            * 0.18
+        + valuation_score    * 0.18
+        + contrarian         * 0.135
+        + trend_score        * 0.27
+        + credit_score       * 0.135
+        + global_macro_score * 0.10
     )
 
     composite_signal, core_alloc, satellite_alloc, cash_alloc = classify_signal(composite_raw)
@@ -123,6 +132,7 @@ def generate_market_signal(save: bool = True) -> dict:
         "timing_score": composite_raw,
         "trend_score": round(trend_score, 2),
         "credit_score": round(credit_score, 2),
+        "global_macro_score": round(global_macro_score, 2),
         "fed_direction": fed_direction,
         "macro_adj": round(macro_adj, 2),
         "macro": macro,

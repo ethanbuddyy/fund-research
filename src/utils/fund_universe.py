@@ -130,6 +130,61 @@ def strategy_match_score(asset_class: str, composite_signal: str) -> float:
                 "sector_equity": 5.0, "growth_equity": 4.5}.get(asset_class, 6.0)
 
 
+def holdings_adjusted_strategy_score(
+    asset_class: str,
+    composite_signal: str,
+    stock_ratio: float | None,
+    bond_ratio: float | None,
+    cash_ratio: float | None,
+) -> float:
+    """用真实持仓比例精修策略匹配分（仅在有 fund_holdings 数据时生效）。
+
+    逻辑：
+      - 无持仓数据 → 直接返回基于 asset_class 的 strategy_match_score（原行为）
+      - 有持仓数据 → 评估实际股票/债券/现金比例与当前信号的匹配度，
+        按 70% 资产类别基础分 + 30% 真实持仓适配分 混合
+
+    这样设计的好处：
+      - 同样标注为 broad_equity 的基金，若实际股票仓位只有 60%（含大量现金），
+        在"重仓进取"信号下的得分会低于高股票仓位基金，评分更精准。
+      - 不影响无持仓数据的基金（退回原行为），保证数据有无时评分口径一致。
+    """
+    base = strategy_match_score(asset_class, composite_signal)
+
+    if stock_ratio is None and bond_ratio is None:
+        return base  # 无持仓数据，保持原行为
+
+    sr = float(stock_ratio or 0)
+    br = float(bond_ratio or 0)
+    cr = float(cash_ratio or 0)
+
+    if composite_signal == "重仓进取":
+        # 期望高股票仓位（>= 85% 满分 10，60% 约 7）
+        holdings_fit = min(10.0, sr / 8.5)
+    elif composite_signal == "减仓防守":
+        # 期望安全资产（债券+现金）占比 >= 80%
+        safe = br + cr
+        holdings_fit = min(10.0, safe / 8.0)
+    elif composite_signal == "谨慎防守":
+        # 中等安全：股票 50-75% 最佳，过高或过低扣分
+        if 50 <= sr <= 75:
+            holdings_fit = 8.0
+        elif sr > 85 or sr < 30:
+            holdings_fit = 4.0
+        else:
+            holdings_fit = 6.5
+    else:  # 标配稳健
+        # 股票 60-85% 均可，略低或略高轻扣
+        if 60 <= sr <= 85:
+            holdings_fit = 8.5
+        elif 45 <= sr < 60 or 85 < sr <= 95:
+            holdings_fit = 7.0
+        else:
+            holdings_fit = 5.0
+
+    return round(base * 0.70 + holdings_fit * 0.30, 2)
+
+
 def classify_asset_class(fund_code: str = "", fund_type: str = "", fund_name: str = "",
                          benchmark: str = "") -> str:
     """优先用 universe 的精确归类；未知基金回退到基准/类型/名字推断（比纯名字关键词稳健）。"""

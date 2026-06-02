@@ -16,7 +16,7 @@ if hasattr(sys.stdout, "reconfigure"):
 import argparse
 import pandas as pd
 
-from src.backtester.engine import run_backtest
+from src.backtester.engine import run_backtest, run_factor_attribution
 
 
 def print_section(title: str):
@@ -40,7 +40,12 @@ def run(args):
     print("  基金投资私人幕僚系统 — 策略回测分析")
     print("=" * 60)
     print(f"  持仓基金数：{args.top}  调仓频率：{'月度' if args.freq == 'M' else '季度'}")
-    print(f"  现金上限：{args.cash}%")
+    print(f"  现金上限：{args.cash}%  幸存者修正：{'开启' if not args.no_correction else '关闭'}")
+
+    # ── 因子归因模式（单独运行，不执行完整回测）──
+    if args.attribution:
+        _run_attribution(args)
+        return
 
     print("\n[回测] 正在执行走向前回测，请稍候...")
     freq_code = "MS" if args.freq == "M" else "QS"
@@ -48,6 +53,7 @@ def run(args):
         top_n=args.top,
         rebalance_freq=freq_code,
         min_cash_pct=args.cash / 100,
+        correct_survivorship=not args.no_correction,
     )
 
     if "error" in result:
@@ -68,6 +74,18 @@ def run(args):
     print(f"  数据来源：{ds_label}")
     if result.get("survivorship_note"):
         print(f"  ⚠️ 幸存者偏差：{result['survivorship_note']}")
+
+    # ── 幸存者偏差修正对照组 ──────────────────────
+    corr = result.get("corrected_strat_metrics")
+    surv_stats = result.get("survivorship_stats", {})
+    if corr:
+        print(f"\n  [幸存者修正] 年化收益：{corr['annualized_return']:+.2f}%"
+              f"  夏普：{corr['sharpe_ratio']:+.3f}"
+              f"  最大回撤：{corr['max_drawdown']:+.2f}%")
+        if surv_stats:
+            print(f"           平均每期剔除 {surv_stats.get('avg_premature_per_period',0):.1f} 只未成立基金")
+        bias = sm["annualized_return"] - corr["annualized_return"]
+        print(f"  [幸存者偏差溢价估算：约 {bias:+.2f}%/年（正值=原回测偏乐观）]")
 
     # ── 1. 绩效对比 ──────────────────────────────
     print_section("一、绩效对比")
@@ -185,10 +203,47 @@ def run(args):
     print("=" * 60)
 
 
+def _run_attribution(args):
+    """执行因子归因分析并打印结果。"""
+    freq_code = "MS" if args.freq == "M" else "QS"
+    print("\n[因子归因] 正在执行 6 次屏蔽实验（每次约需 1–2 分钟）...")
+    result = run_factor_attribution(top_n=args.top, rebalance_freq=freq_code)
+
+    if "error" in result:
+        print(f"[ERROR] {result['error']}")
+        return
+
+    print_section("因子归因分析结果")
+    base = result["base_metrics"]
+    print(f"  基准策略（6因子）：年化 {base['annualized_return']:+.2f}%  夏普 {base['sharpe_ratio']:+.3f}")
+    print(f"  回测区间：{result['start_date']} ～ {result['end_date']}  ({result['n_periods']} 期)\n")
+
+    header = f"  {'因子':10s}  {'原权重':>8s}  {'屏蔽后年化':>10s}  {'贡献':>8s}  评级"
+    print(header)
+    print("  " + "─" * 56)
+
+    factors = result["factors"]
+    # 按贡献排序（降序）
+    for fname, info in sorted(factors.items(), key=lambda x: -x[1]["contribution_pct"]):
+        print(
+            f"  {info['label']:10s}"
+            f"  {info['base_weight']*100:>7.1f}%"
+            f"  {info['ablated_annual']:>+9.2f}%"
+            f"  {info['contribution_pct']:>+7.2f}%"
+            f"  {info['contribution_label']}"
+        )
+
+    print("\n  解读：贡献 = 基准年化 - 屏蔽该因子后年化（正值=此因子对策略有益，负值=反而拖累）")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="基金投资策略回测")
     parser.add_argument("--top",  type=int,   default=5,  help="top-N funds per period (default 5)")
     parser.add_argument("--freq", type=str,   default="M", choices=["M", "Q"], help="rebalance freq M=monthly Q=quarterly")
     parser.add_argument("--cash", type=float, default=50, help="max cash pct 0-100 (default 50)")
+    parser.add_argument("--attribution", action="store_true",
+                        help="执行因子归因分析（逐因子屏蔽，约需 10-15 分钟）")
+    parser.add_argument("--no-correction", dest="no_correction", action="store_true",
+                        help="关闭幸存者偏差修正对照组（默认开启）")
     args = parser.parse_args()
     run(args)

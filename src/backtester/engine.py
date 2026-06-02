@@ -27,6 +27,23 @@ from ..domain.scoring import (
 TRANSACTION_COST_RT = 0.005  # 0.5% 双边（round-trip），按实际换手率扩展
 RF_ANNUAL = 0.02             # 无风险利率假设 2%
 
+# 6因子权重（总和=1.0）
+# 趋势27% + 宏观18% + 估值18% + 情绪13.5% + 信用13.5% + 全球宏观10%
+_FACTOR_WEIGHTS = {
+    "trend":        0.27,
+    "macro":        0.18,
+    "valuation":    0.18,
+    "sentiment":    0.135,
+    "credit":       0.135,
+    "global_macro": 0.10,
+}
+
+# QDII资产规模权重（用于全球宏观因子的区域加权）
+_REGION_WEIGHTS_BACKTEST = {
+    "美国": 0.40, "全球": 0.20, "日本": 0.12,
+    "欧洲": 0.12, "德国": 0.08, "亚洲": 0.08,
+}
+
 
 # ─────────────────────────────────────────────
 # 主入口
@@ -37,8 +54,10 @@ def run_backtest(
     end_date: str = None,
     top_n: int = 5,
     rebalance_freq: str = "MS",
-    cape_overvalued: float = None,   # None = 使用 settings.yaml 值
-    min_cash_pct: float = None,      # 强制最低现金下限（0~0.5），None = 不覆盖
+    cape_overvalued: float = None,      # None = 使用 settings.yaml 值
+    min_cash_pct: float = None,         # 强制最低现金下限（0~0.5），None = 不覆盖
+    correct_survivorship: bool = True,  # 是否同步运行成立日期过滤的对照组
+    factor_weights: dict = None,        # None = 使用 _FACTOR_WEIGHTS 默认权重
 ) -> dict:
     """
     执行走向前月度回测。
@@ -52,15 +71,25 @@ def run_backtest(
         min_cash_pct:   强制最低现金比例（默认不限，可设0降低防守阈值）
     """
     cfg = load_config()
+    fw  = factor_weights or _FACTOR_WEIGHTS
     # 参数覆盖
     if cape_overvalued is not None:
         cfg.setdefault("strategy_params", {}).setdefault("valuation_thresholds", {})["cape_overvalued"] = cape_overvalued
 
-    fund_nav   = read_table("fund_nav_history")
-    market_db  = read_table("market_data")
-    macro_db   = read_table("macro_data")
-    fund_list  = read_table("fund_list")
-    cape_hist  = _load_cape_history()   # 真实 CAPE 历史（如已采集），按日期升序的 Series
+    fund_nav       = read_table("fund_nav_history")
+    market_db      = read_table("market_data")
+    macro_db       = read_table("macro_data")
+    fund_list      = read_table("fund_list")
+    global_macro_db = read_table("global_macro")   # 全球宏观（World Bank + OECD CLI）
+    cape_hist      = _load_cape_history()   # 真实 CAPE 历史
+
+    # 成立日期映射（用于幸存者偏差修正，缺失时跳过修正）
+    inception_map: dict[str, str] = {}
+    if "inception_date" in fund_list.columns:
+        for _, row in fund_list.iterrows():
+            d = row.get("inception_date")
+            if d and pd.notna(d):
+                inception_map[str(row["fund_code"])] = str(d)[:10]
 
     if fund_nav.empty:
         return {"error": "无基金净值数据，请先运行 python run.py"}
@@ -91,25 +120,35 @@ def run_backtest(
     records = []
     # 等权基准：全仓买入所有可用基金，不择时不择基，隔离"选基"vs"择时"贡献
     ewbh_all_codes = fund_list["fund_code"].astype(str).tolist()
-    prev_selected: set[str] = set()   # 上期持仓，用于计算换手率
+    prev_selected: set[str] = set()    # 上期持仓，用于计算换手率
+    prev_selected_corr: set[str] = set()  # 幸存者修正组的上期持仓
+    n_premature_total = 0              # 累计"尚未成立"基金数
 
     for i in range(len(rebalance_dates) - 1):
         t0 = rebalance_dates[i]
         t1 = rebalance_dates[i + 1]
+        t0_str = t0.strftime("%Y-%m-%d")
 
         # 截至 t0 的数据快照（严格无前视偏差）
-        nav_snap = fund_nav[fund_nav["date"] <= t0]
-        mkt_snap = market_db[market_db["date"] <= t0]
-        mac_snap = macro_db[macro_db["date"] <= t0] if not macro_db.empty else pd.DataFrame()
+        nav_snap   = fund_nav[fund_nav["date"] <= t0]
+        mkt_snap   = market_db[market_db["date"] <= t0]
+        mac_snap   = macro_db[macro_db["date"] <= t0] if not macro_db.empty else pd.DataFrame()
         sp500_snap = sp500_full[sp500_full.index <= t0]
 
         # 真实 CAPE 截至 t0 的快照（无前视）
         cape_snap = cape_hist[cape_hist.index <= t0] if cape_hist is not None and not cape_hist.empty else None
 
-        # 生成市场信号
-        signal = _compute_signal(sp500_snap, mkt_snap, mac_snap, cfg, cape_snap)
+        # 全球宏观截至 t0 的快照（年份字符串比较）
+        global_mac_snap = (
+            global_macro_db[global_macro_db["date"].astype(str).str[:4] <= t0_str[:4]]
+            if not global_macro_db.empty else pd.DataFrame()
+        )
 
-        # 评分并选基金
+        # 生成市场信号（6因子，含全球宏观）
+        signal = _compute_signal(sp500_snap, mkt_snap, mac_snap, cfg, cape_snap,
+                                  global_mac_snap=global_mac_snap, factor_weights=fw)
+
+        # 评分并选基金（全量基金池）
         scored = _score_funds(nav_snap, fund_list, signal, cfg)
         selected_codes = scored.head(top_n)["fund_code"].tolist()
 
@@ -142,7 +181,7 @@ def run_backtest(
         # 基准3：等权全仓基金买入持有（无择时无择基，隔离信号贡献）
         ewbh_ret  = _portfolio_period_return(fund_nav, ewbh_all_codes, t0, t1)
 
-        records.append({
+        rec = {
             "date":          t0,
             "strat_return":  strat_ret,
             "sp500_return":  sp500_ret,
@@ -156,7 +195,36 @@ def run_backtest(
             "invested":      round(invested, 2),
             "top_funds":     ", ".join(selected_codes[:3]),
             "cash":          round(signal["cash_allocation"], 2),
-        })
+        }
+
+        # ── 幸存者偏差修正对照组（仅使用成立日期 <= t0 的基金）──────
+        if correct_survivorship and inception_map:
+            available = [c for c in ewbh_all_codes
+                         if inception_map.get(c, "2000-01-01") <= t0_str]
+            n_premature = len(ewbh_all_codes) - len(available)
+            n_premature_total += n_premature
+
+            if available:
+                fl_available = fund_list[fund_list["fund_code"].astype(str).isin(available)]
+                scored_corr = _score_funds(nav_snap, fl_available, signal, cfg)
+                sel_corr = scored_corr.head(top_n)["fund_code"].tolist()
+
+                cur_set_corr = set(sel_corr)
+                if i == 0:
+                    turnover_corr = 1.0
+                else:
+                    n_t = max(len(cur_set_corr | prev_selected_corr), 1)
+                    turnover_corr = len(cur_set_corr.symmetric_difference(prev_selected_corr)) / n_t
+                prev_selected_corr = cur_set_corr
+
+                port_ret_corr = _portfolio_period_return(fund_nav, sel_corr, t0, t1)
+                rec["corrected_return"] = (
+                    port_ret_corr * invested - TRANSACTION_COST_RT * turnover_corr * invested
+                )
+                rec["available_funds"] = len(available)
+                rec["premature_funds"] = n_premature
+
+        records.append(rec)
 
     df = pd.DataFrame(records).set_index("date")
 
@@ -170,22 +238,43 @@ def run_backtest(
     df["strat_dd"]  = _drawdown_series(df["strat_cum"])
     df["sp500_dd"]  = _drawdown_series(df["sp500_cum"])
 
+    # 幸存者偏差修正指标（当 corrected_return 列存在时）
+    corrected_metrics = None
+    surv_stats: dict = {}
+    if "corrected_return" in df.columns:
+        corrected_metrics = calc_metrics(df["corrected_return"].dropna(), "幸存者修正策略")
+        if "premature_funds" in df.columns:
+            surv_stats = {
+                "periods_with_premature": int((df["premature_funds"] > 0).sum()),
+                "avg_premature_per_period": round(df["premature_funds"].mean(), 1),
+                "total_premature_instances": int(n_premature_total),
+            }
+
+    n_funds_with_inception = len(inception_map)
+    surv_note = (
+        f"基金池为当前在运作的 {len(fund_list)} 只核心QDII（其中 {n_funds_with_inception} 只有成立日期）"
+        f"，未含已清盘/改名基金；策略收益为乐观上界，非可复现实盘收益。"
+        + (f" 幸存者修正对照组基于成立日期过滤，"
+           f"平均每期剔除 {surv_stats.get('avg_premature_per_period', 0):.1f} 只未成立基金。"
+           if surv_stats else "")
+    )
+
     return {
-        "df":            df,
-        "strat_metrics": calc_metrics(df["strat_return"],  "本策略（动态配置）"),
-        "sp500_metrics": calc_metrics(df["sp500_return"],  "标普500（买入持有）"),
-        "b6040_metrics": calc_metrics(df["b6040_return"],  "60/40 组合"),
-        "ewbh_metrics":  calc_metrics(df["ewbh_return"],   "等权基金买入持有"),
-        "signal_stats":  _signal_accuracy(df),
-        "start_date":    rebalance_dates[0].strftime("%Y-%m-%d"),
-        "end_date":      rebalance_dates[-1].strftime("%Y-%m-%d"),
-        "n_periods":     len(df),
-        "fund_list":     fund_list,
-        "data_source":   _backtest_data_source(),
-        "survivorship_note": (
-            f"基金池为当前在运作的 {len(fund_list)} 只核心QDII，未含已清盘/改名基金；"
-            "策略收益为乐观上界，非可复现实盘收益。"
-        ),
+        "df":                    df,
+        "strat_metrics":         calc_metrics(df["strat_return"],  "本策略（动态配置）"),
+        "sp500_metrics":         calc_metrics(df["sp500_return"],  "标普500（买入持有）"),
+        "b6040_metrics":         calc_metrics(df["b6040_return"],  "60/40 组合"),
+        "ewbh_metrics":          calc_metrics(df["ewbh_return"],   "等权基金买入持有"),
+        "corrected_strat_metrics": corrected_metrics,          # 幸存者偏差修正对照组
+        "survivorship_stats":    surv_stats,
+        "signal_stats":          _signal_accuracy(df),
+        "start_date":            rebalance_dates[0].strftime("%Y-%m-%d"),
+        "end_date":              rebalance_dates[-1].strftime("%Y-%m-%d"),
+        "n_periods":             len(df),
+        "fund_list":             fund_list,
+        "data_source":           _backtest_data_source(),
+        "factor_weights":        fw,
+        "survivorship_note":     surv_note,
     }
 
 
@@ -203,12 +292,16 @@ def _backtest_data_source() -> str:
 
 def _compute_signal(sp500_snap: pd.Series, mkt_snap: pd.DataFrame,
                     mac_snap: pd.DataFrame, cfg: dict,
-                    cape_snap: pd.Series = None) -> dict:
+                    cape_snap: pd.Series = None,
+                    global_mac_snap: pd.DataFrame = None,
+                    factor_weights: dict = None) -> dict:
     """
-    用截止日期快照重算市场信号（与 signals.py 逻辑严格对应）。
+    用截止日期快照重算市场信号（与 signals.py 逻辑严格对应，6因子版本）。
     估值优先用真实 CAPE 历史（cape_snap，截至 t0，无前视）；缺失时回退点位近似。
-    权重：宏观20% + 估值20% + 逆向情绪15% + 趋势30% + 信用15%（独立因子）
+    factor_weights 允许逐因子归因实验（屏蔽某因子时传入调整后权重）。
     """
+    fw = factor_weights or _FACTOR_WEIGHTS
+
     # SP500 最新价 & VIX
     sp500_price = float(sp500_snap.iloc[-1]) if not sp500_snap.empty else 5000.0
     vix_df = mkt_snap[mkt_snap["symbol"] == "^VIX"].sort_values("date")
@@ -251,9 +344,18 @@ def _compute_signal(sp500_snap: pd.Series, mkt_snap: pd.DataFrame,
     # ⑥ 信用利差（独立因子）
     credit = _credit_from_snap(mac_snap)
 
-    # 去相关权重：宏观20% + 估值20% + 逆向情绪15% + 趋势30% + 信用15%
-    raw = (macro_adj * 0.20 + val_score * 0.20
-           + contrarian * 0.15 + trend * 0.30 + credit * 0.15)
+    # ⑦ 全球宏观综合评分（新第6因子）
+    global_macro = _global_macro_score_from_snap(global_mac_snap)
+
+    # 6因子加权综合评分
+    raw = (
+        macro_adj   * fw.get("macro",        0.18)
+        + val_score * fw.get("valuation",    0.18)
+        + contrarian * fw.get("sentiment",   0.135)
+        + trend      * fw.get("trend",       0.27)
+        + credit     * fw.get("credit",      0.135)
+        + global_macro * fw.get("global_macro", 0.10)
+    )
 
     sig, c, s, ca = classify_signal(raw)
 
@@ -261,6 +363,7 @@ def _compute_signal(sp500_snap: pd.Series, mkt_snap: pd.DataFrame,
         "composite_signal": sig, "composite_raw": raw,
         "core_allocation": c, "satellite_allocation": s, "cash_allocation": ca,
         "cape": cape, "vix": vix, "trend_score": trend,
+        "global_macro_score": global_macro,
     }
 
 
@@ -317,6 +420,56 @@ def _credit_from_snap(mac: pd.DataFrame) -> float:
     if sub.empty:
         return 5.0
     return credit_score_from_spread(float(sub.iloc[-1]["value"]))
+
+
+def _global_macro_score_from_snap(snap: pd.DataFrame) -> float:
+    """从 global_macro 快照计算加权全球宏观评分（0-10）。与 production 端对称。"""
+    if snap is None or snap.empty:
+        return 5.0
+
+    weighted_sum = 0.0
+    total_weight = 0.0
+
+    for region, g in snap.groupby("region"):
+        def _latest_val(ind):
+            sub = g[g["indicator"] == ind].sort_values("date")
+            return float(sub.iloc[-1]["value"]) if not sub.empty and pd.notna(sub.iloc[-1]["value"]) else None
+
+        gdp   = _latest_val("gdp_growth")
+        inf   = _latest_val("inflation")
+        unemp = _latest_val("unemployment")
+        cli   = _latest_val("cli")
+
+        if all(x is None for x in (gdp, inf, unemp, cli)):
+            continue
+
+        score = _region_score_engine(gdp, inf, unemp, cli)
+        w = _REGION_WEIGHTS_BACKTEST.get(region, 0.05)
+        weighted_sum += w * score
+        total_weight += w
+
+    return round(weighted_sum / total_weight, 2) if total_weight > 0 else 5.0
+
+
+def _region_score_engine(gdp, inf, unemp, cli) -> float:
+    """与 global_macro_analyzer._region_score 逻辑一致，内联避免跨模块依赖。"""
+    score = 5.0
+    if gdp is not None:
+        if gdp >= 3.0:   score += 2.0
+        elif gdp >= 1.5: score += 1.0
+        elif gdp < 0:    score -= 2.0
+    if inf is not None:
+        if 1.0 <= inf <= 3.0:  score += 1.0
+        elif inf > 5.0:        score -= 1.5
+        elif inf > 3.0:        score -= 0.5
+        elif inf < 0:          score -= 1.0
+    if unemp is not None:
+        if unemp <= 4.0:  score += 1.0
+        elif unemp > 6.0: score -= 1.0
+    if cli is not None:
+        if cli >= 100.5:  score += 1.0
+        elif cli < 99.5:  score -= 1.0
+    return max(0.0, min(10.0, score))
 
 
 def _trend_from_snap(sp500_snap: pd.Series) -> float:
@@ -561,6 +714,162 @@ def _drawdown_series(cum: pd.Series) -> pd.Series:
 # ─────────────────────────────────────────────
 # 信号有效性分析
 # ─────────────────────────────────────────────
+
+def _ablate_weights(base: dict, factor: str) -> dict:
+    """将 factor 权重置 0，其余等比放大使总和仍为 1.0。"""
+    ablated = {k: (0.0 if k == factor else v) for k, v in base.items()}
+    total = sum(ablated.values())
+    return {k: v / total for k, v in ablated.items()} if total > 0 else base
+
+
+def run_factor_attribution(
+    start_date: str = None,
+    end_date: str = None,
+    top_n: int = 5,
+    rebalance_freq: str = "MS",
+) -> dict:
+    """逐因子屏蔽回测，量化各因子对策略年化收益的边际贡献。
+
+    方法：
+      1. 以默认 6 因子权重（_FACTOR_WEIGHTS）作为基准回测；
+      2. 对每个因子依次将其权重置 0，剩余因子按比例放大；
+      3. 对比基准 vs 屏蔽后的年化收益，差值即该因子的贡献（正 = 有益）。
+
+    Returns:
+        {
+          "base_metrics":      calc_metrics of baseline,
+          "base_annual_return": float,
+          "factors": {
+            factor_name: {
+              "base_weight":       float,
+              "ablated_metrics":   calc_metrics dict,
+              "ablated_annual":    float,
+              "contribution_pct":  float,   # 基准 - 屏蔽后（年化%）
+              "contribution_label": str,
+            }, ...
+          }
+        }
+    """
+    # 加载一次数据，7次共用
+    cfg        = load_config()
+    fund_nav   = read_table("fund_nav_history")
+    market_db  = read_table("market_data")
+    macro_db   = read_table("macro_data")
+    fund_list  = read_table("fund_list")
+    global_macro_db = read_table("global_macro")
+    cape_hist  = _load_cape_history()
+    sp500_full = _fetch_sp500_full(market_db)
+
+    if fund_nav.empty:
+        return {"error": "无基金净值数据"}
+
+    fund_nav["date"]  = pd.to_datetime(fund_nav["date"])
+    market_db["date"] = pd.to_datetime(market_db["date"])
+    if not macro_db.empty:
+        macro_db["date"] = pd.to_datetime(macro_db["date"])
+
+    data_start = max(
+        fund_nav["date"].min() + pd.DateOffset(months=6),
+        macro_db["date"].min() + pd.DateOffset(months=12) if not macro_db.empty else pd.Timestamp("2022-01-01"),
+        sp500_full.index.min() + pd.DateOffset(months=1),
+    )
+    data_end = fund_nav["date"].max()
+
+    bt_start = pd.to_datetime(start_date) if start_date else data_start
+    bt_end   = pd.to_datetime(end_date)   if end_date   else data_end
+    dates    = pd.date_range(start=bt_start, end=bt_end, freq=rebalance_freq)
+
+    if len(dates) < 4:
+        return {"error": "回测区间过短"}
+
+    ewbh_codes = fund_list["fund_code"].astype(str).tolist()
+
+    def _run_with_weights(fw: dict) -> pd.Series:
+        """内部快速回测循环，返回月度收益序列。"""
+        prev: set[str] = set()
+        rets = []
+        for i in range(len(dates) - 1):
+            t0, t1 = dates[i], dates[i + 1]
+            t0_str = t0.strftime("%Y-%m-%d")
+
+            nav_snap    = fund_nav[fund_nav["date"] <= t0]
+            mkt_snap    = market_db[market_db["date"] <= t0]
+            mac_snap    = macro_db[macro_db["date"] <= t0] if not macro_db.empty else pd.DataFrame()
+            sp500_snap  = sp500_full[sp500_full.index <= t0]
+            cape_snap   = cape_hist[cape_hist.index <= t0] if cape_hist is not None and not cape_hist.empty else None
+            gm_snap     = (global_macro_db[global_macro_db["date"].astype(str).str[:4] <= t0_str[:4]]
+                           if not global_macro_db.empty else pd.DataFrame())
+
+            sig = _compute_signal(sp500_snap, mkt_snap, mac_snap, cfg, cape_snap,
+                                  global_mac_snap=gm_snap, factor_weights=fw)
+
+            scored = _score_funds(nav_snap, fund_list, sig, cfg)
+            sel = scored.head(top_n)["fund_code"].tolist()
+
+            cur = set(sel)
+            turnover = 1.0 if i == 0 else len(cur.symmetric_difference(prev)) / max(len(cur | prev), 1)
+            prev = cur
+
+            invested = sig["core_allocation"] + sig["satellite_allocation"]
+            port_ret = _portfolio_period_return(fund_nav, sel, t0, t1)
+            rets.append(port_ret * invested - TRANSACTION_COST_RT * turnover * invested)
+
+        return pd.Series(rets)
+
+    print("[因子归因] 基准回测...")
+    base_rets    = _run_with_weights(_FACTOR_WEIGHTS)
+    base_metrics = calc_metrics(base_rets, "基准（6因子）")
+    base_ann     = base_metrics["annualized_return"]
+
+    factors: dict = {}
+    factor_labels = {
+        "trend":        "价格趋势",
+        "macro":        "宏观周期",
+        "valuation":    "市场估值",
+        "sentiment":    "逆向情绪",
+        "credit":       "信用利差",
+        "global_macro": "全球宏观",
+    }
+
+    for fname in _FACTOR_WEIGHTS:
+        label = factor_labels.get(fname, fname)
+        print(f"[因子归因] 屏蔽 {label}...")
+        ablated_fw   = _ablate_weights(_FACTOR_WEIGHTS, fname)
+        ablated_rets = _run_with_weights(ablated_fw)
+        ablated_met  = calc_metrics(ablated_rets, f"屏蔽{label}")
+        ablated_ann  = ablated_met["annualized_return"]
+        contribution = base_ann - ablated_ann
+
+        if contribution > 1.5:
+            c_label = "★★ 强正贡献"
+        elif contribution > 0.3:
+            c_label = "★ 正贡献"
+        elif contribution > -0.3:
+            c_label = "◇ 中性"
+        elif contribution > -1.5:
+            c_label = "▽ 负贡献"
+        else:
+            c_label = "▼▼ 强负贡献"
+
+        factors[fname] = {
+            "label":              label,
+            "base_weight":        _FACTOR_WEIGHTS[fname],
+            "ablated_weights":    ablated_fw,
+            "ablated_metrics":    ablated_met,
+            "ablated_annual":     ablated_ann,
+            "contribution_pct":   round(contribution, 2),
+            "contribution_label": c_label,
+        }
+
+    return {
+        "base_metrics":      base_metrics,
+        "base_annual_return": base_ann,
+        "factors":           factors,
+        "start_date":        dates[0].strftime("%Y-%m-%d"),
+        "end_date":          dates[-1].strftime("%Y-%m-%d"),
+        "n_periods":         len(dates) - 1,
+    }
+
 
 def _signal_accuracy(df: pd.DataFrame) -> pd.DataFrame:
     """

@@ -7,6 +7,37 @@ import pandas as pd
 from ..utils.database import read_table
 
 
+# QDII 资产规模视角的地区权重（美股占 QDII 总规模约 40%）
+_REGION_WEIGHTS = {
+    "美国": 0.40, "全球": 0.20, "日本": 0.12,
+    "欧洲": 0.12, "德国": 0.08, "亚洲": 0.08,
+}
+
+
+def compute_global_macro_score(global_macro_result: dict) -> float:
+    """从 analyze_global_macro() 结果计算加权全球宏观综合评分（0–10）。
+
+    按 QDII 资产规模权重对各区域健康分加权平均；无数据区域跳过但不归零。
+    返回 5.0 表示中性（无数据或全量数据不足）。
+    """
+    if not global_macro_result.get("available"):
+        return 5.0
+
+    regions = global_macro_result.get("regions") or {}
+    weighted_sum = 0.0
+    total_weight = 0.0
+
+    for region, info in regions.items():
+        score = info.get("score")
+        if score is None or info.get("label") == "数据不足":
+            continue
+        w = _REGION_WEIGHTS.get(region, 0.05)
+        weighted_sum += w * float(score)
+        total_weight += w
+
+    return round(weighted_sum / total_weight, 2) if total_weight > 0 else 5.0
+
+
 def analyze_global_macro() -> dict:
     """返回 {regions: {区域名: {...}}, strongest, weakest, available}。"""
     df = read_table("global_macro")
