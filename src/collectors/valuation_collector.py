@@ -79,10 +79,15 @@ def _collect_pe_via_yfinance() -> dict:
         import yfinance as yf
         spy = yf.Ticker("SPY")
         info = spy.info
-        pe = info.get("trailingPE") or info.get("forwardPE")
-        if pe and float(pe) > 0:
+        _pe_raw = info.get("trailingPE") or info.get("forwardPE")
+        try:
+            pe = float(_pe_raw) if _pe_raw is not None else None
+        except (TypeError, ValueError):
+            print(f"[WARN] yfinance PE 值无法转为浮点数: {_pe_raw!r}，跳过")
+            pe = None
+        if pe and pe > 0:
             today = datetime.now().strftime("%Y-%m-%d")
-            _save_valuation("sp500_pe", [(today, float(pe))], source="yfinance")
+            _save_valuation("sp500_pe", [(today, pe)], source="yfinance")
             print(f"[OK] 估值数据 sp500_pe (yfinance 备用): {pe:.2f}")
             return {"sp500_pe": 1}
     except Exception as e:

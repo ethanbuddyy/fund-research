@@ -1,4 +1,5 @@
 """Phase 2: Portfolio Advisor — 投资决策阶段"""
+import traceback
 from .backend import call_with_tools
 from .schemas import PHASE2_TOOL
 from ..utils.config import load_config
@@ -170,5 +171,11 @@ class PortfolioAdvisor:
             )
             return _normalize_output(result)
         except Exception as e:
-            print(f"[AI Phase2] 决策失败，使用规则层 fallback: {e}")
+            module = type(e).__module__ or ""
+            is_api_err = module.startswith(("anthropic", "openai")) or isinstance(e, (ValueError, TimeoutError))
+            if is_api_err:
+                print(f"[AI Phase2] API调用失败，使用规则层 fallback: {e}")
+            else:
+                print(f"[AI Phase2] 意外程序错误，使用规则层 fallback: {e}")
+                traceback.print_exc()
             return None

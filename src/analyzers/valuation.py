@@ -113,7 +113,9 @@ def _estimate_cape(sp500_df: pd.DataFrame) -> float:
     """
     if sp500_df.empty:
         return 30.0
-    sp500_df = sp500_df.sort_values("date")
+    sp500_df = sp500_df.sort_values("date").dropna(subset=["close"])
+    if sp500_df.empty:
+        return 30.0
     current = float(sp500_df.iloc[-1]["close"])
     cape = 30.0 + (current - 5000) / 1000 * 3.0
     return round(min(max(cape, 12), 50), 1)
@@ -123,7 +125,9 @@ def _estimate_pe(sp500_df: pd.DataFrame) -> float:
     """近似标普500 P/E（仅在真实数据不可用时使用）。"""
     if sp500_df.empty:
         return 22.0
-    sp500_df = sp500_df.sort_values("date")
+    sp500_df = sp500_df.sort_values("date").dropna(subset=["close"])
+    if sp500_df.empty:
+        return 22.0
     current = float(sp500_df.iloc[-1]["close"])
     pe = 22.0 + (current - 5000) / 1000 * 2.0
     return round(min(max(pe, 10), 40), 1)
@@ -136,12 +140,13 @@ def _calc_buffett_indicator(equity_cap_df: pd.DataFrame, nominal_gdp_df: pd.Data
     两个序列均可用时返回 ('real', value)，否则退回点位近似。
     """
     if not equity_cap_df.empty and not nominal_gdp_df.empty:
-        equity_cap_df  = equity_cap_df.sort_values("date")
-        nominal_gdp_df = nominal_gdp_df.sort_values("date")
-        equity_val = float(equity_cap_df.iloc[-1]["value"])   # 十亿美元
-        gdp_val    = float(nominal_gdp_df.iloc[-1]["value"])  # 十亿美元，SAAR已年化
-        if gdp_val > 0 and equity_val > 0:
-            return round(equity_val / gdp_val, 3), "real"
+        equity_cap_df  = equity_cap_df.sort_values("date").dropna(subset=["value"])
+        nominal_gdp_df = nominal_gdp_df.sort_values("date").dropna(subset=["value"])
+        if not equity_cap_df.empty and not nominal_gdp_df.empty:
+            equity_val = float(equity_cap_df.iloc[-1]["value"])   # 十亿美元
+            gdp_val    = float(nominal_gdp_df.iloc[-1]["value"])  # 十亿美元，SAAR已年化
+            if gdp_val > 0 and equity_val > 0:
+                return round(equity_val / gdp_val, 3), "real"
 
     # 回退：基于标普500点位的近似估算
     if sp500_df.empty:

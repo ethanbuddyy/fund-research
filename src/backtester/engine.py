@@ -137,8 +137,8 @@ def run_backtest(
 
         # 基准1：标普500买入持有
         sp500_ret = _index_period_return(sp500_full, t0, t1)
-        # 基准2：60/40（标普500 60% + 现金 40%）
-        b6040_ret = sp500_ret * 0.6
+        # 基准2：60/40（标普500 60% + 无风险现金 40%）
+        b6040_ret = sp500_ret * 0.6 + (RF_ANNUAL / 12) * 0.4
         # 基准3：等权全仓基金买入持有（无择时无择基，隔离信号贡献）
         ewbh_ret  = _portfolio_period_return(fund_nav, ewbh_all_codes, t0, t1)
 

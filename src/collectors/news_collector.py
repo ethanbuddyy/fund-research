@@ -221,6 +221,9 @@ def _fetch_finnhub(api_key: str, today: str) -> dict | None:
         )
         resp.raise_for_status()
         articles = resp.json()
+        if not isinstance(articles, list):
+            print(f"[WARN] Finnhub 返回非列表响应（类型={type(articles).__name__}），跳过")
+            return None
         if not articles:
             return None
 
@@ -250,12 +253,19 @@ def get_market_sentiment() -> dict:
     vix = 18.0
     sp500_1m_return = 0.0
     if not vix_df.empty:
-        vix = float(vix_df.iloc[0]["close"])
+        _vix_raw = vix_df.iloc[0]["close"]
+        if pd.notna(_vix_raw):
+            vix = float(_vix_raw)
+        else:
+            print("[WARN] VIX 最新收盘价为 NULL，使用默认值 18.0")
     if len(sp500_df) >= 20:
-        sp500_df = sp500_df.sort_values("date")
-        sp500_1m_return = (
-            float(sp500_df.iloc[-1]["close"]) / float(sp500_df.iloc[0]["close"]) - 1
-        ) * 100
+        sp500_df = sp500_df.sort_values("date").dropna(subset=["close"])
+        if len(sp500_df) >= 2:
+            _base = float(sp500_df.iloc[0]["close"])
+            if _base > 0:
+                sp500_1m_return = (float(sp500_df.iloc[-1]["close"]) / _base - 1) * 100
+            else:
+                print("[WARN] SP500 起始收盘价为 0 或无效，跳过动量计算")
 
     vix_score      = max(0.0, min(100.0, 100.0 - (vix - 10.0) * 3.33))
     momentum_score = max(0.0, min(100.0, 50.0 + sp500_1m_return * 5.0))

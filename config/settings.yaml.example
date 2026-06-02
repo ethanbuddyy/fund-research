@@ -6,6 +6,7 @@
 # FRED API Key（美国宏观+巴菲特指标）。免费申请：
 # https://fred.stlouisfed.org/docs/api/api_key.html
 # 留空或保留占位符 → 自动降级为模拟数据（会在输出中明确标记）
+# 推荐用环境变量 FRED_API_KEY 代替在此处写明文（优先级高于此处的值）
 fred_api_key: "YOUR_FRED_API_KEY_HERE"
 
 # Finnhub API Key（新闻情绪，免费注册：https://finnhub.io/）

@@ -35,6 +35,8 @@ def analyze_macro_cycle() -> dict:
     fed_direction_score = _fed_direction_score(rate_df)
 
     # 政策环境
+    if fed_rate is None:
+        print("[WARN] 联储利率数据缺失，政策环境判断使用2024年参考值5.3%")
     effective_rate = fed_rate if fed_rate is not None else 5.3
     if effective_rate > 4.0:
         policy_env = "紧缩"
@@ -45,6 +47,10 @@ def analyze_macro_cycle() -> dict:
     else:
         policy_env = "宽松"
         policy_note = f"联储基准利率 {effective_rate:.2f}%，货币政策宽松"
+
+    data_quality = "full" if all(
+        v is not None for v in [gdp_growth, inflation, fed_rate, unemployment]
+    ) else "partial"
 
     return {
         "cycle": cycle["phase"],
@@ -60,10 +66,20 @@ def analyze_macro_cycle() -> dict:
         "yield_inverted": yield_curve < 0,
         "policy_env": policy_env,
         "policy_note": policy_note,
+        "data_quality": data_quality,
     }
 
 
 def _determine_cycle(gdp_growth, inflation, fed_rate, unemployment, yield_curve) -> dict:
+    missing = [k for k, v in {
+        "GDP增长": gdp_growth, "通胀": inflation,
+        "联储利率": fed_rate, "失业率": unemployment,
+    }.items() if v is None]
+    if missing:
+        print(
+            f"[WARN] 宏观周期判断：{', '.join(missing)} 数据缺失，"
+            f"以2024年参考值替代——结果仅供参考，请补充FRED数据"
+        )
     g = gdp_growth if gdp_growth is not None else 2.5
     inf = inflation if inflation is not None else 3.0
     rate = fed_rate if fed_rate is not None else 5.3

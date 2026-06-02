@@ -39,6 +39,11 @@ def collect_market_data() -> dict[str, pd.DataFrame]:
                 hist["date"] = pd.to_datetime(hist["date"]).dt.strftime("%Y-%m-%d")
                 hist["symbol"] = symbol
                 hist["name"] = name
+                required = ["date", "open", "high", "low", "close", "volume"]
+                missing_cols = [c for c in required if c not in hist.columns]
+                if missing_cols:
+                    print(f"[WARN] {symbol} yfinance返回缺少列: {missing_cols}，跳过")
+                    continue
                 df = hist[["symbol", "name", "date", "open", "high", "low", "close", "volume"]].copy()
                 df = df.dropna(subset=["close"])
                 results[symbol] = df

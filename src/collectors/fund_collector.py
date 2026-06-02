@@ -107,8 +107,8 @@ def _collect_nav_history(ak, fund_codes: list) -> dict:
                 df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
                 df["acc_nav"] = df.get("累计净值", df["nav"])
                 nav_data[code] = df[["fund_code", "date", "nav", "acc_nav", "daily_return"]].dropna(subset=["nav"])
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[WARN] 基金 {code} 净值历史采集失败: {e}")
     return nav_data
 
 
@@ -262,7 +262,11 @@ def _patch_recent_via_yfinance(fund_list: list, nav_history: dict) -> dict:
             df["close_cny"] = df["close"] * df["fx"]
 
             # 接续CSV最后一条净值（以人民币口径缩放）
-            last_nav = float(existing.iloc[-1]["nav"])
+            _last_nav_raw = existing.iloc[-1]["nav"]
+            if not pd.notna(_last_nav_raw):
+                print(f"[WARN] 基金 {code} CSV末行nav为NULL，跳过近期补全")
+                continue
+            last_nav = float(_last_nav_raw)
             base = float(df["close_cny"].iloc[0])
             if base <= 0:
                 continue
@@ -275,8 +279,8 @@ def _patch_recent_via_yfinance(fund_list: list, nav_history: dict) -> dict:
 
             nav_history[code] = pd.concat([existing, df], ignore_index=True).drop_duplicates("date")
             print(f"[yfinance] {code} 补充近期数据 {len(df)} 条（汇率换算，{start} ~ {today_str}）")
-        except Exception:
-            pass  # 网络失败时保留原有CSV数据
+        except Exception as e:
+            print(f"[WARN] 基金 {code} yfinance净值补全失败（保留原有CSV数据）: {e}")
 
     return nav_history
 
@@ -295,5 +299,6 @@ def _fetch_usdcny(yf) -> "pd.Series | None":
         s.columns = ["date", "rate"]
         s["date"] = pd.to_datetime(s["date"]).dt.strftime("%Y-%m-%d")
         return s.set_index("date")["rate"].astype(float)
-    except Exception:
+    except Exception as e:
+        print(f"[WARN] USD/CNY汇率获取失败，跳过近期净值补全: {e}")
         return None

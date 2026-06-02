@@ -26,8 +26,9 @@ SERIES_NAMES = {
 
 
 def collect_macro_data() -> dict[str, pd.DataFrame]:
+    import os
     cfg = load_config()
-    api_key = cfg.get("fred_api_key", "")
+    api_key = os.environ.get("FRED_API_KEY") or cfg.get("fred_api_key", "")
     results = {}
 
     from ..utils import provenance
