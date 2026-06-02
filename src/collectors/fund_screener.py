@@ -5,7 +5,7 @@
      成立日期/费率）。
   2) 过滤：成立满 N 年、具备业绩记录、费率达标。
   3) 分类：按名称客观推断 基准/地区/资产类别。
-  4) 去重：每个底层指数只保留最优的若干只（消除“5只标普500”这类冗余）。
+  4) 去重：每个底层指数只保留最优的若干只（消除"5只标普500"这类冗余）。
   5) 排序+上限：按指定指标排序，控制池子规模与多样性。
 
 设计：纯规则核心（解析/过滤/去重/排序）只依赖 stdlib + fund_universe，可离线单测；
@@ -64,6 +64,9 @@ def screen_funds(cfg: dict = None) -> list:
     candidates = _parse_rank_rows(text)
     if not candidates:
         return []
+
+    # 从数据库补充规模数据（best-effort，失败时不影响主流程）
+    candidates = _enrich_aum(candidates)
 
     today = datetime.now().date()
     filtered = apply_filters(candidates, sc, today)
@@ -127,10 +130,11 @@ def _pct_to_float(s):
 # ── 纯规则核心（离线可测）──────────────────────────────
 
 def apply_filters(cands: list, sc: dict, today) -> list:
-    """成立年限 + 业绩记录 + 费率 过滤。"""
+    """成立年限 + 业绩记录 + 费率 + 规模(可选) 过滤。"""
     min_years = sc.get("min_inception_years", 2.0)
     require_3y = sc.get("require_3y_record", False)
     max_fee = sc.get("max_purchase_fee", 0.015)
+    min_aum = sc.get("min_aum_yi", 0) or 0      # 规模下限(亿)，0 表示不过滤
 
     kept = []
     for c in cands:
@@ -138,7 +142,7 @@ def apply_filters(cands: list, sc: dict, today) -> list:
         age = _age_years(c.get("inception_date"), today)
         if age is not None and age < min_years:
             continue
-        # 若拿不到成立日期，用“有近1年业绩”兜底证明有最低记录
+        # 若拿不到成立日期，用"有近1年业绩"兜底证明有最低记录
         if age is None and c.get("return_1y") is None:
             continue
         # 业绩记录
@@ -148,6 +152,11 @@ def apply_filters(cands: list, sc: dict, today) -> list:
         fee = c.get("purchase_fee")
         if fee is not None and max_fee is not None and fee > max_fee:
             continue
+        # 规模过滤（仅在 min_aum_yi>0 且该基金有规模数据时生效；无数据则放行）
+        if min_aum > 0:
+            aum = c.get("aum_yi")
+            if aum is not None and aum < min_aum:
+                continue
         c = {**c, "age_years": round(age, 1) if age is not None else None}
         kept.append(c)
     return kept
@@ -180,7 +189,7 @@ def classify_and_dedup(cands: list, sc: dict) -> list:
         fee = c.get("purchase_fee")
         return (r if r is not None else -1e9, -(fee if fee is not None else 1e9))
 
-    # ① 先按“基名”合并同一基金的不同份额类别(A/C、人民币/美元现汇)，每只基金只留最优份额
+    # ① 先按"基名"合并同一基金的不同份额类别(A/C、人民币/美元现汇)，每只基金只留最优份额
     by_fund = {}
     for c in enriched:
         by_fund.setdefault(_normalize_base(c["fund_name"]), []).append(c)
@@ -197,10 +206,14 @@ def classify_and_dedup(cands: list, sc: dict) -> list:
 
     # ③ 全局按排序键排序，控制池上限
     deduped.sort(key=sort_key, reverse=True)
-    return deduped[:cap]
+    pool = deduped[:cap]
+
+    # ④ 宽基保底：确保每个有宽基候选的地区在池中至少有 1 只 broad_equity 基金
+    pool = _ensure_broad_equity_coverage(pool, enriched, sort_key)
+    return pool
 
 
-# 可识别的标准指数基准（命中则按基准去重；否则按“去份额类别后的基金基名”去重）
+# 可识别的标准指数基准（命中则按基准去重；否则按"去份额类别后的基金基名"去重）
 _KNOWN_BENCHMARKS = {
     "标普500", "纳斯达克100", "标普科技", "标普油气", "日经225", "MSCI日本",
     "MSCI欧洲", "MSCI全球", "MSCI亚洲", "DAX", "恒生指数", "全球债券", "黄金",
@@ -209,13 +222,13 @@ _KNOWN_BENCHMARKS = {
 
 
 def _normalize_base(name: str) -> str:
-    """去掉份额类别/币种/结构后缀，得到基金“基名”，用于合并 A/C、人民币/美元现汇 等同一基金的不同份额。"""
+    """去掉份额类别/币种/结构后缀，得到基金"基名"，用于合并 A/C、人民币/美元现汇 等同一基金的不同份额。"""
     s = name or ""
     s = re.sub(r"[（(]\s*QDII\s*[）)]", "", s)
     s = re.sub(r"(人民币|美元现汇|美元现钞|美元|美钞|现汇|现钞|欧元|港币)", "", s)
     s = re.sub(r"(ETF联接|联接|ETF|LOF)", "", s)
     s = s.strip()
-    # 反复剥离结尾份额字母（如 “…股票A”“…混合C”，含“A人民币”去币后再去A）
+    # 反复剥离结尾份额字母（如 "…股票A""…混合C"，含"A人民币"去币后再去A）
     for _ in range(2):
         s = re.sub(r"[ABCDE]$", "", s).strip()
     return s
@@ -226,6 +239,57 @@ def _dedup_key(benchmark: str, name: str) -> str:
     if benchmark in _KNOWN_BENCHMARKS:
         return f"bench::{benchmark}"
     return f"base::{_normalize_base(name)}"
+
+
+def _ensure_broad_equity_coverage(pool: list, all_enriched: list, sort_key) -> list:
+    """宽基保底：all_enriched 中有宽基候选的地区，在 pool 中必须至少保留 1 只。
+
+    若某地区的宽基基金全部被池容量截断，则从 all_enriched 里挑该地区评分最高的宽基
+    基金强制追加到 pool 末尾（不计入 max_pool_size 硬限制，保证多样性）。
+    """
+    pool_codes = {c["fund_code"] for c in pool}
+    broad_in_pool = {c["region"] for c in pool if c.get("asset_class") == "broad_equity"}
+    all_broad = [c for c in all_enriched if c.get("asset_class") == "broad_equity"]
+    missing_regions = {c["region"] for c in all_broad} - broad_in_pool
+
+    additions = []
+    for region in sorted(missing_regions):
+        candidates = [c for c in all_broad
+                      if c["region"] == region and c["fund_code"] not in pool_codes]
+        if not candidates:
+            continue
+        best = max(candidates, key=sort_key)
+        additions.append(best)
+        pool_codes.add(best["fund_code"])
+        print(f"[宽基保底] {region} 无宽基覆盖，补入: {best['fund_name']} ({best['fund_code']})")
+
+    return pool + additions
+
+
+def _enrich_aum(candidates: list) -> list:
+    """从 fund_list.total_assets 补充规模数据（亿元），缺失时静默跳过。
+
+    total_assets 由 eastmoney_collector 在 pingzhongdata 富集后写入；
+    若尚未富集则所有基金的 aum_yi 均为 None，min_aum_yi 过滤自动失效（放行）。
+    """
+    try:
+        from ..utils.database import get_connection
+        codes = [c["fund_code"] for c in candidates]
+        if not codes:
+            return candidates
+        conn = get_connection()
+        placeholders = ",".join("?" * len(codes))
+        rows = conn.execute(
+            f"SELECT fund_code, total_assets FROM fund_list WHERE fund_code IN ({placeholders})",
+            codes,
+        ).fetchall()
+        conn.close()
+        aum_map = {r[0]: r[1] for r in rows if r[1] is not None}
+        if not aum_map:
+            return candidates
+        return [{**c, "aum_yi": aum_map.get(c["fund_code"])} for c in candidates]
+    except Exception:
+        return candidates
 
 
 def _age_years(inception_date: str, today):
