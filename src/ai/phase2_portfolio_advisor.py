@@ -115,11 +115,39 @@ def _format_funds(portfolio: dict, market_signal: dict) -> str:
     return "\n".join(lines)
 
 
+def _normalize_output(result: dict) -> dict:
+    """修复 DeepSeek 常见输出问题，保证下游访问安全。"""
+    # 1. scenario_analysis 有时返回字符串而非 {bull/bear/base_case} 对象
+    sc = result.get("scenario_analysis")
+    if isinstance(sc, str):
+        result["scenario_analysis"] = {"base_case": sc, "bull_case": "", "bear_case": ""}
+    elif not isinstance(sc, dict):
+        result["scenario_analysis"] = {"base_case": "", "bull_case": "", "bear_case": ""}
+
+    # 2. fund_rationales 中个别基金可能缺少 required 字段
+    _RATIONALE_DEFAULTS = {
+        "fund_code": "",
+        "fund_name": "",
+        "role": "核心",
+        "cycle_fit": "",
+        "risk_note": "",
+        "conviction_level": "medium",
+    }
+    rationales = result.get("fund_rationales")
+    if isinstance(rationales, list):
+        for r in rationales:
+            if isinstance(r, dict):
+                for k, v in _RATIONALE_DEFAULTS.items():
+                    r.setdefault(k, v)
+
+    return result
+
+
 class PortfolioAdvisor:
     def __init__(self):
         cfg = load_config().get("ai_analysis", {})
         self.model = cfg.get("phase2_model", "claude-sonnet-4-6")
-        self.max_tokens = 4000
+        self.max_tokens = 6000
 
     def advise(
         self,
@@ -128,7 +156,7 @@ class PortfolioAdvisor:
         portfolio: dict,
     ) -> dict | None:
         try:
-            return call_with_tools(
+            result = call_with_tools(
                 system=_SYSTEM_ROLE,
                 user_parts=[
                     _format_phase1_summary(ai_phase1),
@@ -140,6 +168,7 @@ class PortfolioAdvisor:
                 cache_system=True,
                 cache_first_user=True,
             )
+            return _normalize_output(result)
         except Exception as e:
             print(f"[AI Phase2] 决策失败，使用规则层 fallback: {e}")
             return None

@@ -123,43 +123,6 @@ PHASE2_TOOL = {
     "input_schema": {
         "type": "object",
         "properties": {
-            "fund_rationales": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "fund_code": {"type": "string"},
-                        "fund_name": {"type": "string"},
-                        "role": {"type": "string", "enum": ["核心", "卫星"]},
-                        "cycle_fit": {
-                            "type": "string",
-                            "description": (
-                                "为何适合当前周期，1-2句，必须引用阶段一的具体宏观指标或该基金的具体评分维度。"
-                                "禁止空泛表述如'表现稳健'或'适合当前环境'。"
-                            ),
-                        },
-                        "risk_note": {
-                            "type": "string",
-                            "description": (
-                                "该基金当前最需关注的具体风险，必须结合费率/跟踪指数/地区集中度等基金特征，"
-                                "以及当前市场主要矛盾（如高估值、流动性收紧等），禁止泛化表述。"
-                            ),
-                        },
-                        "conviction_level": {
-                            "type": "string",
-                            "enum": ["high", "medium", "low"],
-                        },
-                    },
-                    "required": [
-                        "fund_code",
-                        "fund_name",
-                        "role",
-                        "cycle_fit",
-                        "risk_note",
-                        "conviction_level",
-                    ],
-                },
-            },
             "portfolio_thesis": {
                 "type": "string",
                 "description": (
@@ -198,13 +161,50 @@ PHASE2_TOOL = {
                 },
                 "required": ["bull_case", "bear_case", "base_case"],
             },
+            "fund_rationales": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "fund_code": {"type": "string"},
+                        "fund_name": {"type": "string"},
+                        "role": {"type": "string", "enum": ["核心", "卫星"]},
+                        "cycle_fit": {
+                            "type": "string",
+                            "description": (
+                                "为何适合当前周期，1-2句，必须引用阶段一的具体宏观指标或该基金的具体评分维度。"
+                                "禁止空泛表述如'表现稳健'或'适合当前环境'。"
+                            ),
+                        },
+                        "risk_note": {
+                            "type": "string",
+                            "description": (
+                                "该基金当前最需关注的具体风险，必须结合费率/跟踪指数/地区集中度等基金特征，"
+                                "以及当前市场主要矛盾（如高估值、流动性收紧等），禁止泛化表述。"
+                            ),
+                        },
+                        "conviction_level": {
+                            "type": "string",
+                            "enum": ["high", "medium", "low"],
+                        },
+                    },
+                    "required": [
+                        "fund_code",
+                        "fund_name",
+                        "role",
+                        "cycle_fit",
+                        "risk_note",
+                        "conviction_level",
+                    ],
+                },
+            },
         },
         "required": [
-            "fund_rationales",
             "portfolio_thesis",
             "position_sizing_notes",
             "rebalance_triggers",
             "scenario_analysis",
+            "fund_rationales",
         ],
     },
 }
