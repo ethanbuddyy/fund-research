@@ -1,10 +1,17 @@
-"""市场情绪采集：Finnhub 市场新闻标题情绪（主路径）+ VIX/动量推导（fallback）
+"""市场情绪采集：Alpha Vantage（主）+ Finnhub（辅）+ VIX/动量（fallback）
 
-Finnhub 免费层可用 /news?category=general（100条），对标题+摘要做
-金融关键词多空打分，转换为 0-100 情绪分。
+优先级：
+  1. Alpha Vantage NEWS_SENTIMENT — ML 直接打分，-1~+1，25次/天
+  2. Finnhub /news headlines    — 关键词多空打分，60次/分钟
+  3. VIX + 标普动量推导           — 无任何新闻 key 时退回
 
-权重：有 Finnhub 数据时 VIX 40% + 动量 25% + 新闻 35%
-      无 Finnhub 数据时 VIX 60% + 动量 40%（退回旧逻辑）
+新闻权重混合：
+  AV + Finnhub 均有  → news = AV*0.65 + Finnhub*0.35
+  仅 AV              → news = AV
+  仅 Finnhub         → news = Finnhub
+  均无               → VIX 60% + 动量 40%（旧逻辑）
+
+最终情绪分 = VIX 40% + 动量 25% + news 35%（有新闻时）
 """
 import os
 import re
@@ -14,8 +21,7 @@ from ..utils.database import read_table, upsert_dataframe
 from ..utils.config import load_config
 
 
-# ── 金融情绪关键词表 ──────────────────────────────────────────────
-# 多空词各 ~30 个，覆盖市场/宏观/地缘三个维度，避免通用否定词误判
+# ── 金融情绪关键词表（Finnhub 关键词打分用）────────────────────────
 
 _BULLISH_WORDS = re.compile(
     r"\b("
@@ -28,7 +34,6 @@ _BULLISH_WORDS = re.compile(
     r")\b",
     re.IGNORECASE,
 )
-
 _BEARISH_WORDS = re.compile(
     r"\b("
     r"falls?|fell|drops?|dropped|plunges?|declines?|declined|slides?|slid|sinks?|sank|"
@@ -41,21 +46,18 @@ _BEARISH_WORDS = re.compile(
     r")\b",
     re.IGNORECASE,
 )
-
-# 仅过滤明显无关类别（娱乐、体育）；business/top news/forex/crypto 全保留
 _SKIP_CATEGORIES = {"entertainment", "sports"}
 
 
-# ── Finnhub 采集 ──────────────────────────────────────────────────
+# ── 共用工具 ──────────────────────────────────────────────────────
 
-def _get_finnhub_api_key() -> str:
+def _get_key(env_var: str, cfg_key: str) -> str:
     cfg = load_config()
-    return os.environ.get("FINNHUB_API_KEY") or cfg.get("finnhub_api_key", "")
+    return os.environ.get(env_var) or cfg.get(cfg_key, "")
 
 
-def _load_cached_finnhub(today: str) -> dict | None:
-    """读取今日已缓存的 Finnhub 情绪数据，避免重复调用 API。"""
-    df = read_table("news_sentiment", "date = ? AND source = 'finnhub'", (today,))
+def _load_cache(today: str, source: str) -> dict | None:
+    df = read_table("news_sentiment", "date = ? AND source = ?", (today, source))
     if df.empty:
         return None
     row = df.iloc[0]
@@ -68,10 +70,10 @@ def _load_cached_finnhub(today: str) -> dict | None:
     }
 
 
-def _save_finnhub(today: str, data: dict):
+def _save_cache(today: str, source: str, data: dict):
     df = pd.DataFrame([{
         "date":           today,
-        "source":         "finnhub",
+        "source":         source,
         "bullish_pct":    data["bullish_pct"],
         "bearish_pct":    data["bearish_pct"],
         "news_score":     data["news_score"],
@@ -81,8 +83,102 @@ def _save_finnhub(today: str, data: dict):
     upsert_dataframe(df, "news_sentiment", ["date", "source"])
 
 
+# ── Alpha Vantage ─────────────────────────────────────────────────
+
+def _fetch_alphavantage(api_key: str, today: str) -> dict | None:
+    """调用 Alpha Vantage NEWS_SENTIMENT，返回归一化情绪指标。
+
+    AV 返回每篇文章的 overall_sentiment_score（-1~+1）；
+    过滤 relevance_score < 0.3 的低相关文章后加权平均，
+    转换到 0-1 区间作为 bullish_pct。
+    """
+    cached = _load_cache(today, "alphavantage")
+    if cached:
+        return cached
+
+    try:
+        import requests
+        resp = requests.get(
+            "https://www.alphavantage.co/query",
+            params={
+                "function": "NEWS_SENTIMENT",
+                "topics":   "financial_markets,economy_macro",
+                "limit":    50,
+                "apikey":   api_key,
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+        if "Information" in data or "Note" in data:
+            msg = data.get("Information") or data.get("Note", "")
+            print(f"[WARN] Alpha Vantage 限流或配额耗尽: {msg[:80]}")
+            return None
+
+        feed = data.get("feed", [])
+        if not feed:
+            print("[WARN] Alpha Vantage 返回空 feed")
+            return None
+
+        # 过滤低相关文章，加权平均 overall_sentiment_score
+        scores, weights = [], []
+        bullish_n = bearish_n = neutral_n = 0
+        for article in feed:
+            rel = float(article.get("relevance_score", 0) or 0)
+            if rel < 0.3:
+                continue
+            raw = float(article.get("overall_sentiment_score", 0) or 0)
+            scores.append(raw)
+            weights.append(rel)
+            label = article.get("overall_sentiment_label", "")
+            if "Bullish" in label:
+                bullish_n += 1
+            elif "Bearish" in label:
+                bearish_n += 1
+            else:
+                neutral_n += 1
+
+        if not scores:
+            print("[WARN] Alpha Vantage 过滤后无有效文章")
+            return None
+
+        # 加权平均分（-1~+1）→ bullish_pct（0~1）
+        total_w  = sum(weights)
+        avg_score = sum(s * w for s, w in zip(scores, weights)) / total_w
+        bullish_pct = (avg_score + 1.0) / 2.0
+
+        # news_score：多头占比 0.7 + 有情绪文章占比 0.3
+        total_scored = bullish_n + bearish_n + neutral_n or 1
+        engagement   = (bullish_n + bearish_n) / total_scored
+        news_score   = bullish_pct * 0.7 + engagement * 0.3
+
+        result = {
+            "bullish_pct": round(bullish_pct, 4),
+            "bearish_pct": round(1 - bullish_pct, 4),
+            "news_score":  round(news_score, 4),
+            "buzz":        round(engagement, 4),
+            "articles":    total_scored,
+            "bullish_n":   bullish_n,
+            "bearish_n":   bearish_n,
+            "avg_score":   round(avg_score, 4),
+        }
+        _save_cache(today, "alphavantage", result)
+        print(
+            f"[OK] Alpha Vantage 情绪（{total_scored}篇有效）: "
+            f"均分{avg_score:+.3f} → 多头占比{bullish_pct*100:.1f}%  "
+            f"多{bullish_n}/空{bearish_n}/中{neutral_n}"
+        )
+        return result
+
+    except Exception as e:
+        print(f"[WARN] Alpha Vantage 情绪获取失败: {e}")
+        return None
+
+
+# ── Finnhub ───────────────────────────────────────────────────────
+
 def _score_headlines(articles: list) -> dict:
-    """对标题 + 摘要做关键词多空计数，返回情绪指标。"""
     bullish = bearish = neutral = 0
     for item in articles:
         if item.get("category", "").lower() in _SKIP_CATEGORIES:
@@ -97,13 +193,11 @@ def _score_headlines(articles: list) -> dict:
         else:
             neutral += 1
 
-    total = bullish + bearish + neutral or 1
+    total  = bullish + bearish + neutral or 1
     scored = bullish + bearish or 1
-    bullish_pct = bullish / scored          # 有明确倾向的文章中多头占比
-    # news_score：结合多头占比与参与度（有明确情绪的文章占比）
-    engagement = (bullish + bearish) / total
-    news_score = bullish_pct * 0.7 + engagement * 0.3
-
+    bullish_pct = bullish / scored
+    engagement  = (bullish + bearish) / total
+    news_score  = bullish_pct * 0.7 + engagement * 0.3
     return {
         "bullish_pct": round(bullish_pct, 4),
         "bearish_pct": round(1 - bullish_pct, 4),
@@ -116,8 +210,7 @@ def _score_headlines(articles: list) -> dict:
 
 
 def _fetch_finnhub(api_key: str, today: str) -> dict | None:
-    """调用 Finnhub /news?category=general，返回关键词情绪指标。"""
-    cached = _load_cached_finnhub(today)
+    cached = _load_cache(today, "finnhub")
     if cached:
         return cached
 
@@ -134,11 +227,11 @@ def _fetch_finnhub(api_key: str, today: str) -> dict | None:
             return None
 
         result = _score_headlines(articles)
-        _save_finnhub(today, result)
+        _save_cache(today, "finnhub", result)
         print(
             f"[OK] Finnhub 新闻情绪（{result['articles']}条）: "
             f"多头{result['bullish_n']}篇 / 空头{result['bearish_n']}篇 → "
-            f"多头占比{result['bullish_pct']*100:.1f}%  新闻分{result['news_score']:.3f}"
+            f"多头占比{result['bullish_pct']*100:.1f}%"
         )
         return result
 
@@ -150,11 +243,6 @@ def _fetch_finnhub(api_key: str, today: str) -> dict | None:
 # ── 主函数 ────────────────────────────────────────────────────────
 
 def get_market_sentiment() -> dict:
-    """返回综合市场情绪字典。
-
-    有 Finnhub Key 时：VIX 40% + 动量 25% + 新闻 35%
-    无 Finnhub Key 时：VIX 60% + 动量 40%（旧逻辑）
-    """
     today = datetime.now().strftime("%Y-%m-%d")
 
     # ── 基础指标：VIX + 标普动量 ──────────────────────────────────
@@ -163,10 +251,8 @@ def get_market_sentiment() -> dict:
 
     vix = 18.0
     sp500_1m_return = 0.0
-
     if not vix_df.empty:
         vix = float(vix_df.iloc[0]["close"])
-
     if len(sp500_df) >= 20:
         sp500_df = sp500_df.sort_values("date")
         sp500_1m_return = (
@@ -176,22 +262,36 @@ def get_market_sentiment() -> dict:
     vix_score      = max(0.0, min(100.0, 100.0 - (vix - 10.0) * 3.33))
     momentum_score = max(0.0, min(100.0, 50.0 + sp500_1m_return * 5.0))
 
-    # ── 尝试接入 Finnhub 新闻情绪 ─────────────────────────────────
-    api_key = _get_finnhub_api_key()
-    finnhub = _fetch_finnhub(api_key, today) if api_key else None
+    # ── 新闻情绪：AV 主 + Finnhub 辅 ─────────────────────────────
+    av_key  = _get_key("ALPHAVANTAGE_API_KEY", "alphavantage_api_key")
+    fh_key  = _get_key("FINNHUB_API_KEY",      "finnhub_api_key")
 
-    if finnhub:
-        news_score = finnhub["bullish_pct"] * 100.0
+    av      = _fetch_alphavantage(av_key, today) if av_key else None
+    finnhub = _fetch_finnhub(fh_key, today)      if fh_key else None
+
+    if av and finnhub:
+        # AV 质量更高，权重 0.65；Finnhub 关键词补充 0.35
+        raw_news  = av["bullish_pct"] * 0.65 + finnhub["bullish_pct"] * 0.35
+        news_score = raw_news * 100.0
+        news_source = "alphavantage+finnhub"
+    elif av:
+        news_score  = av["bullish_pct"] * 100.0
+        news_source = "alphavantage"
+    elif finnhub:
+        news_score  = finnhub["bullish_pct"] * 100.0
+        news_source = "finnhub"
+    else:
+        news_score  = None
+        news_source = "N/A"
+
+    if news_score is not None:
         sentiment_score = int(
             vix_score      * 0.40
             + momentum_score * 0.25
             + news_score     * 0.35
         )
-        news_source = "finnhub"
     else:
-        news_score      = None
         sentiment_score = int(vix_score * 0.60 + momentum_score * 0.40)
-        news_source     = "N/A"
 
     # ── 情绪标签 ──────────────────────────────────────────────────
     if sentiment_score >= 75:
@@ -217,9 +317,14 @@ def get_market_sentiment() -> dict:
         "news_source":     news_source,
     }
 
+    if av:
+        result["av_avg_score"]   = av.get("avg_score")
+        result["av_bullish_pct"] = av["bullish_pct"]
+        result["av_articles"]    = av["articles"]
+        result["av_bullish_n"]   = av.get("bullish_n")
+        result["av_bearish_n"]   = av.get("bearish_n")
     if finnhub:
         result["finnhub_bullish_pct"] = finnhub["bullish_pct"]
-        result["finnhub_bearish_pct"] = finnhub["bearish_pct"]
         result["finnhub_articles"]    = finnhub["articles"]
         result["finnhub_bullish_n"]   = finnhub.get("bullish_n")
         result["finnhub_bearish_n"]   = finnhub.get("bearish_n")

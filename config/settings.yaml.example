@@ -12,6 +12,11 @@ fred_api_key: "YOUR_FRED_API_KEY_HERE"
 # 留空则情绪信号退回 VIX + 标普动量推导；也可设置环境变量 FINNHUB_API_KEY
 finnhub_api_key: ""
 
+# Alpha Vantage API Key（新闻情绪 ML 打分，免费注册：https://www.alphavantage.co/support/#api-key）
+# 25次/天，情绪质量优于关键词打分，配置后自动成为主要新闻来源
+# 也可设置环境变量 ALPHAVANTAGE_API_KEY
+alphavantage_api_key: ""
+
 # SQLite 数据库路径（相对于项目根目录）
 db_path: "data/fund_research.db"
 
