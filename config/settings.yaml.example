@@ -8,6 +8,10 @@
 # 留空或保留占位符 → 自动降级为模拟数据（会在输出中明确标记）
 fred_api_key: "YOUR_FRED_API_KEY_HERE"
 
+# Finnhub API Key（新闻情绪，免费注册：https://finnhub.io/）
+# 留空则情绪信号退回 VIX + 标普动量推导；也可设置环境变量 FINNHUB_API_KEY
+finnhub_api_key: ""
+
 # SQLite 数据库路径（相对于项目根目录）
 db_path: "data/fund_research.db"
 

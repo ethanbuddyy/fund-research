@@ -159,6 +159,18 @@ def init_database():
         notes TEXT,
         updated_at TEXT DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS news_sentiment (
+        date TEXT NOT NULL,
+        source TEXT NOT NULL DEFAULT 'finnhub',
+        bullish_pct REAL,
+        bearish_pct REAL,
+        news_score REAL,
+        buzz REAL,
+        articles_count INTEGER,
+        updated_at TEXT DEFAULT (datetime('now')),
+        PRIMARY KEY (date, source)
+    );
     """)
     conn.commit()
     conn.close()
