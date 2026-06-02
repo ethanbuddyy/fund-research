@@ -136,17 +136,17 @@ def _estimate_pe(sp500_df: pd.DataFrame) -> float:
 def _calc_buffett_indicator(equity_cap_df: pd.DataFrame, nominal_gdp_df: pd.DataFrame,
                             sp500_df: pd.DataFrame) -> tuple[float, str]:
     """巴菲特指标：美股权益总市值 / 名义GDP。
-    优先使用 FRED 真实数据（NCBEILQ027S / GDP，均为十亿美元）；
+    优先使用 FRED 真实数据；NCBEILQ027S 单位为百万美元，GDP 单位为十亿美元（SAAR）。
     两个序列均可用时返回 ('real', value)，否则退回点位近似。
     """
     if not equity_cap_df.empty and not nominal_gdp_df.empty:
         equity_cap_df  = equity_cap_df.sort_values("date").dropna(subset=["value"])
         nominal_gdp_df = nominal_gdp_df.sort_values("date").dropna(subset=["value"])
         if not equity_cap_df.empty and not nominal_gdp_df.empty:
-            equity_val = float(equity_cap_df.iloc[-1]["value"])   # 十亿美元
-            gdp_val    = float(nominal_gdp_df.iloc[-1]["value"])  # 十亿美元，SAAR已年化
-            if gdp_val > 0 and equity_val > 0:
-                return round(equity_val / gdp_val, 3), "real"
+            equity_val_m = float(equity_cap_df.iloc[-1]["value"])   # 百万美元
+            gdp_val_b    = float(nominal_gdp_df.iloc[-1]["value"])  # 十亿美元，SAAR已年化
+            if gdp_val_b > 0 and equity_val_m > 0:
+                return round((equity_val_m / 1000) / gdp_val_b, 3), "real"  # 统一换算为十亿
 
     # 回退：基于标普500点位的近似估算
     if sp500_df.empty:

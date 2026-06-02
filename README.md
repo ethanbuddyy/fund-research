@@ -111,7 +111,7 @@ multpl 估值           市场情绪(VIX)          市场叙事(文字观察)   
 | 全球区域宏观(各国 GDP/通胀/失业) | **World Bank** | ❌ | `global_macro_collector.py` |
 | 领先指标 CLI | **OECD** | ❌(尽力而为) | `global_macro_collector.py` |
 | 市场行情(指数/VIX/商品/板块ETF) | **yfinance** | ❌ | `market_collector.py` |
-| 市场估值(真实 Shiller CAPE / 标普PE) | **multpl.com** | ❌ | `valuation_collector.py` |
+| 市场估值(真实 Shiller CAPE / 标普PE) | **multpl.com**（主）→ **Shiller 官方 XLS**（备）→ yfinance PE（兜底） | ❌ | `valuation_collector.py` |
 | QDII 基金池(规则筛选) | **天天基金 QDII排行** | ❌ | `fund_screener.py` |
 | 基金真实净值 + 持仓 + 经理 | **天天基金 pingzhongdata** | ❌ | `eastmoney_collector.py` |
 | 基金列表/净值(备选) | **akshare** | ❌ | `fund_collector.py` |
@@ -123,7 +123,7 @@ multpl 估值           市场情绪(VIX)          市场叙事(文字观察)   
 > - 环境变量 `FRED_API_KEY`（推荐，优先级更高）：`export FRED_API_KEY=xxxx`
 > - 配置文件 `config/settings.yaml` 的 `fred_api_key` 字段（留空则降级为模拟数据）
 
-> **FRED 序列说明**：巴菲特指标现使用真实 FRED 数据计算：`NCBEILQ027S`（美国非金融企业股权总市值，十亿美元）/ `GDP`（名义 GDP，SAAR，十亿美元）；两者均不可用时退回标普500点位近似并标注 `estimated`。
+> **FRED 序列说明**：巴菲特指标现使用真实 FRED 数据计算：`NCBEILQ027S`（美国非金融企业股权总市值，**百万美元**）/ 1000 / `GDP`（名义 GDP，SAAR，十亿美元）；两者均不可用时退回标普500点位近似并标注 `estimated`。
 
 ---
 
@@ -295,6 +295,8 @@ fund-research/
 - ✅ **基金池宽基保底**：`classify_and_dedup` 在去重截断后，对 all_enriched 中有宽基候选但池中未覆盖的地区强制补入最优宽基基金，防止全美国高收益基金挤出日本/欧洲宽基
 - ✅ **基金池规模过滤**：`apply_filters` 接入 `min_aum_yi` 配置；`_enrich_aum()` 从 `fund_list.total_assets` 补充规模数据（需 pingzhongdata 富集后生效，未富集时过滤自动失效/放行）
 - ✅ **基金元数据核对**（2026-06-02）：25 只核心库基金逐一核验；519977 长信全球债券确认为 QDII 债券基金（`bond`），非可转债；费率来源基金合同，不含申购费
+- ✅ **估值数据源三级冗余**（2026-06-02）：`valuation_collector.py` 采集优先级改为 multpl.com → Shiller 官方 XLS（Yale，1871–至今，原始来源）→ yfinance PE；修复 multpl.com 正则（HTML 实体 `&#x2002;` 导致解析失败）；新增 `_collect_cape_via_shiller_xls()` 并修正小数年月份解析（`.01`–`.12` 为月份编号，而非年内分数）
+- ✅ **巴菲特指标单位修正**（2026-06-02）：FRED `NCBEILQ027S` 单位为百万美元而非十亿，`_calc_buffett_indicator` 增加 `÷1000` 换算，修正前结果偏高 1000 倍（2298 → 2.298）
 - ✅ **个人化输入**：`config/settings.yaml` 新增 `user_profile` 块（risk_tolerance / investment_horizon_years / 仓位上下界）；`apply_user_profile()` 在信号档位基础上叠加偏移，conservative 降 ~10% 权益、aggressive 升 ~10%，短期投资者额外收紧；调整明细在 CLI 打印并写入报告
 - ✅ **回撤止损机制**：`portfolio_tracker.py` 追踪假设持仓的加权累计净值（初始 100），与历史高水位比较；`risk_management.stop_loss_pct` 超阈值时强制信号降至"减仓防守"（核心 35% / 卫星 15% / 现金 50%）；快照增加 weight_pct + nav 字段供追踪用
 - ✅ **全球宏观并入量化信号**（第6因子）：`compute_global_macro_score()` 对 World Bank GDP/通胀/失业 + OECD CLI 按 QDII 资产规模权重（美国40%/全球20%/…）加权，得到 0-10 评分；6因子权重：趋势27%+宏观18%+估值18%+情绪13.5%+信用13.5%+全球宏观10%；回测引擎同步更新，无前视偏差

@@ -132,7 +132,7 @@ def score_all_funds(market_signal: dict) -> pd.DataFrame:
             "risk_score":        round(risk_score * 10, 1),
             "strategy_score":    round(strategy_score * 10, 1),
             "consistency_score": round(consist_score * 10, 1),
-            "cost_score":        round(cost_score * 10, 1),
+            "cost_score":        round(cost_score_val * 10, 1),
             "signal":            signal,
             "recommendation":    recommendation,
         })
