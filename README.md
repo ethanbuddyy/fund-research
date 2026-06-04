@@ -87,13 +87,13 @@
 
 | 命令 | 用途 |
 |:-----|:-----|
-| `python run.py` | 完整流程：采集 → 信号 → 评分 → 组合 → 报告（MD + HTML） |
-| `python run.py --backtest` | 同上，并附带回测分析（注入报告第九章） |
-| `python run.py --analyze 513100` | 单只基金综合研判（支持代码或名称关键词） |
-| `python run.py --search 纳斯达克` | 搜索基金代码 |
-| `python run.py --check-holdings` | 持仓健康诊断（读取 `config/my_holdings.yaml`） |
-| `python scheduler.py` | 每日定时调度（北京时间 08:30） |
-| `python backtest.py --attribution` | 独立回测 + 因子归因分析 |
+| `python3 run.py` | 完整流程：采集 → 信号 → 评分 → 组合 → 报告（MD + HTML） |
+| `python3 \1.py --backtest` | 同上，并附带回测分析（注入报告第九章） |
+| `python3 \1.py --analyze 513100` | 单只基金综合研判（支持代码或名称关键词） |
+| `python3 \1.py --search 纳斯达克` | 搜索基金代码 |
+| `python3 \1.py --check-holdings` | 持仓健康诊断（读取 `config/my_holdings.yaml`） |
+| `python3 scheduler.py` | 每日定时调度（北京时间 08:30） |
+| `python3 \1.py --attribution` | 独立回测 + 因子归因分析 |
 
 ---
 
@@ -144,7 +144,7 @@
 
 ### 4. 投研报告（10 章节）
 
-每次 `python run.py` 后同时生成 **Markdown + HTML** 双格式报告，并自动复制至 `WSL-output` 目录：
+每次 `python3 run.py` 后同时生成 **Markdown + HTML** 双格式报告，并自动复制至 `WSL-output` 目录：
 
 | # | 章节 | 核心内容 |
 |:-:|:-----|:--------|
@@ -166,8 +166,8 @@
 **`--analyze`** — 对任意基金做深度研判，无需触发完整采集流程：
 
 ```
-python run.py --analyze 513100        # 按基金代码
-python run.py --analyze 纳斯达克      # 按名称关键词
+python3 run.py --analyze 513100        # 按基金代码
+python3 run.py --analyze 纳斯达克      # 按名称关键词
 ```
 
 输出涵盖：基本信息 / 绩效归因 / 费率对比 / 持仓透视 / 风险指标 / 区域宏观适配度 / 综合结论。
@@ -175,9 +175,9 @@ python run.py --analyze 纳斯达克      # 按名称关键词
 **`--check-holdings`** — 持仓健康诊断，检测集中度、最大回撤、费率负担、风格漂移等：
 
 ```
-python run.py --check-holdings                            # 读 config/my_holdings.yaml
-python run.py --check-holdings config/my_holdings.yaml   # 指定路径
-python run.py --check-holdings "513100:0.4,006282:0.6"   # 内联格式
+python3 run.py --check-holdings                            # 读 config/my_holdings.yaml
+python3 run.py --check-holdings config/my_holdings.yaml   # 指定路径
+python3 run.py --check-holdings "513100:0.4,006282:0.6"   # 内联格式
 ```
 
 ### 6. 市场叙事
@@ -260,10 +260,10 @@ cp config/settings.yaml.example config/settings.yaml
 
 ```bash
 # 采集 → 信号 → 评分 → 组合 → Markdown + HTML 投研报告
-python run.py
+python3 run.py
 
 # 含回测（结果注入报告第九章，约需 1–2 分钟）
-python run.py --backtest
+python3 run.py --backtest
 ```
 
 运行后 CLI 末尾打印两份报告路径，并自动复制至 `/mnt/e/WSL-output/`（若可访问）：
@@ -278,31 +278,31 @@ python run.py --backtest
 
 ```bash
 # 按基金代码
-python run.py --analyze 513100
+python3 run.py --analyze 513100
 
 # 按名称关键词（自动模糊匹配）
-python run.py --analyze 纳斯达克
-python run.py --analyze 标普500
+python3 run.py --analyze 纳斯达克
+python3 run.py --analyze 标普500
 ```
 
 ### 基金代码搜索
 
 ```bash
-python run.py --search 纳斯达克
-python run.py --search 标普500
+python3 run.py --search 纳斯达克
+python3 run.py --search 标普500
 ```
 
 ### 持仓健康诊断
 
 ```bash
 # 读取默认持仓文件（config/my_holdings.yaml，已 gitignore）
-python run.py --check-holdings
+python3 run.py --check-holdings
 
 # 指定持仓文件路径
-python run.py --check-holdings /path/to/holdings.yaml
+python3 run.py --check-holdings /path/to/holdings.yaml
 
 # 内联格式：基金代码:权重（权重为小数）
-python run.py --check-holdings "513100:0.4,006282:0.3,164906:0.3"
+python3 run.py --check-holdings "513100:0.4,006282:0.3,164906:0.3"
 ```
 
 诊断项目包括：集中度 / 最大回撤 / 费率负担 / 风格漂移 / 区域宏观适配度 / 整体健康评级。
@@ -311,17 +311,17 @@ python run.py --check-holdings "513100:0.4,006282:0.3,164906:0.3"
 
 ```bash
 # 每日定时调度（北京时间 08:30）
-python scheduler.py
-python scheduler.py --once      # 立即执行一次
+python3 scheduler.py
+python3 scheduler.py --once      # 立即执行一次
 
 # 独立回测
-python backtest.py                        # 默认参数（含幸存者偏差修正对照组）
-python backtest.py --top 8 --freq Q --cash 10
-python backtest.py --attribution          # 因子归因分析（约 10–15 分钟）
-python backtest.py --no-correction        # 关闭幸存者偏差修正
+python3 backtest.py                        # 默认参数（含幸存者偏差修正对照组）
+python3 backtest.py --top 8 --freq Q --cash 10
+python3 backtest.py --attribution          # 因子归因分析（约 10–15 分钟）
+python3 backtest.py --no-correction        # 关闭幸存者偏差修正
 
 # 工具
-python tools/download_seed_data.py        # 一次性下载基金净值种子 CSV
+python3 tools/download_seed_data.py        # 一次性下载基金净值种子 CSV
 ```
 
 ### 配置项说明（`config/settings.yaml`，已 gitignore）
@@ -497,7 +497,7 @@ fund-research/
 - ✅ **四基准对比**：策略 vs 等权买持 vs 60/40 vs 纯现金；60/40 基准的现金仓位按 `RF_ANNUAL/12` 计息
 - ✅ **因子归因**（`--attribution`）：逐因子屏蔽回测，量化各因子边际贡献，结果注入报告第九章
 - ✅ **幸存者偏差修正**：每个调仓日仅允许成立日期 ≤ t0 的基金参与对照组，量化偏差溢价
-- ✅ **回测嵌入报告**：`python run.py --backtest` 触发，结果直接注入当期报告第九章
+- ✅ **回测嵌入报告**：`python3 run.py --backtest` 触发，结果直接注入当期报告第九章
 
 </details>
 
