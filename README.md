@@ -35,18 +35,53 @@
 
 数据从采集到报告的完整四层链路：
 
-```
-┌──────────────────┐   ┌──────────────────┐   ┌──────────────────┐   ┌──────────────────┐
-│    采集层        │   │    分析层        │   │    决策层        │   │    报告层        │
-├──────────────────┤   ├──────────────────┤   ├──────────────────┤   ├──────────────────┤
-│ FRED 宏观        │──▶│ 宏观周期四阶段   │──▶│ 市场综合信号     │──▶│ Markdown 投研报告│
-│ World Bank/OECD  │   │ 全球区域宏观     │   │ 基金综合评分     │   │ HTML 可视化报告  │
-│ yfinance 行情    │   │ 估值(真实CAPE)   │   │ 核心-卫星组合    │   │ · 结论+触发条件  │
-│ multpl 估值      │   │ 情绪(VIX)        │   │ 市场叙事         │   │ · 五因子得分表   │
-│ 天天基金 净值/仓 │   │ 基金绩效         │   │ AI 增强(可选)    │   │ · 推荐基金明细   │
-│ Baostock ETF     │   │ 持仓健康诊断     │   │                  │   │ · 行动计划+回测  │
-└──────────────────┘   └──────────────────┘   └──────────────────┘   └──────────────────┘
-```
+<table>
+  <tr>
+    <th align="center">📥&nbsp;采集层</th>
+    <th></th>
+    <th align="center">🔬&nbsp;分析层</th>
+    <th></th>
+    <th align="center">🎯&nbsp;决策层</th>
+    <th></th>
+    <th align="center">📊&nbsp;报告层</th>
+  </tr>
+  <tr>
+    <td valign="top">
+      FRED 宏观<br/>
+      World Bank/OECD<br/>
+      yfinance 行情<br/>
+      multpl 估值<br/>
+      天天基金 净值/仓<br/>
+      Baostock ETF
+    </td>
+    <td valign="middle" align="center">──▶</td>
+    <td valign="top">
+      宏观周期四阶段<br/>
+      全球区域宏观<br/>
+      估值（真实 CAPE）<br/>
+      情绪（VIX）<br/>
+      基金绩效<br/>
+      持仓健康诊断
+    </td>
+    <td valign="middle" align="center">──▶</td>
+    <td valign="top">
+      市场综合信号<br/>
+      基金综合评分<br/>
+      核心-卫星组合<br/>
+      市场叙事<br/>
+      AI 增强（可选）
+    </td>
+    <td valign="middle" align="center">──▶</td>
+    <td valign="top">
+      Markdown 投研报告<br/>
+      HTML 可视化报告<br/>
+      · 结论＋触发条件<br/>
+      · 五因子得分表<br/>
+      · 推荐基金明细<br/>
+      · 行动计划＋回测
+    </td>
+  </tr>
+</table>
 
 ### 快速命令速查
 
