@@ -27,39 +27,42 @@
 
 CORE_QDII_FUNDS = [
     # ── 美国宽基 ──────────────────────────────────────
-    {"fund_code": "513100", "fund_name": "纳斯达克100ETF(华夏)",  "fund_type": "ETF",     "benchmark": "纳斯达克100", "region": "美国", "expense_ratio": 0.006,  "asset_class": "growth_equity"},
-    {"fund_code": "513500", "fund_name": "标普500ETF(南方)",      "fund_type": "ETF",     "benchmark": "标普500",     "region": "美国", "expense_ratio": 0.006,  "asset_class": "broad_equity"},
-    {"fund_code": "159941", "fund_name": "纳斯达克ETF(博时)",     "fund_type": "ETF",     "benchmark": "纳斯达克100", "region": "美国", "expense_ratio": 0.006,  "asset_class": "growth_equity"},
-    {"fund_code": "040046", "fund_name": "华安标普500增强",       "fund_type": "增强指数", "benchmark": "标普500",     "region": "美国", "expense_ratio": 0.012,  "asset_class": "broad_equity"},
-    {"fund_code": "006479", "fund_name": "易方达标普科技",        "fund_type": "被动指数", "benchmark": "标普科技",    "region": "美国", "expense_ratio": 0.012,  "asset_class": "sector_equity"},
-    {"fund_code": "206005", "fund_name": "博时标普500ETF联接",    "fund_type": "ETF联接", "benchmark": "标普500",     "region": "美国", "expense_ratio": 0.0085, "asset_class": "broad_equity"},
-    {"fund_code": "161130", "fund_name": "标普500指数LOF(富国)",  "fund_type": "LOF",     "benchmark": "标普500",     "region": "美国", "expense_ratio": 0.006,  "asset_class": "broad_equity"},
-    {"fund_code": "002803", "fund_name": "摩根标普500指数",       "fund_type": "被动指数", "benchmark": "标普500",     "region": "美国", "expense_ratio": 0.007,  "asset_class": "broad_equity"},
+    # mgmt_fee/custody_fee 来源：各基金合同/天天基金F10，核对日期 2026-06-04
+    {"fund_code": "513100", "fund_name": "纳斯达克100ETF(华夏)",  "fund_type": "ETF",     "benchmark": "纳斯达克100", "region": "美国", "expense_ratio": 0.006,  "mgmt_fee": 0.005,  "custody_fee": 0.001,  "asset_class": "growth_equity"},
+    {"fund_code": "513500", "fund_name": "标普500ETF(南方)",      "fund_type": "ETF",     "benchmark": "标普500",     "region": "美国", "expense_ratio": 0.006,  "mgmt_fee": 0.005,  "custody_fee": 0.001,  "asset_class": "broad_equity"},
+    {"fund_code": "159941", "fund_name": "纳斯达克ETF(博时)",     "fund_type": "ETF",     "benchmark": "纳斯达克100", "region": "美国", "expense_ratio": 0.006,  "mgmt_fee": 0.005,  "custody_fee": 0.001,  "asset_class": "growth_equity"},
+    {"fund_code": "040046", "fund_name": "华安标普500增强",       "fund_type": "增强指数", "benchmark": "标普500",     "region": "美国", "expense_ratio": 0.012,  "mgmt_fee": 0.010,  "custody_fee": 0.002,  "asset_class": "broad_equity"},
+    {"fund_code": "006479", "fund_name": "易方达标普科技",        "fund_type": "被动指数", "benchmark": "标普科技",    "region": "美国", "expense_ratio": 0.012,  "mgmt_fee": 0.010,  "custody_fee": 0.002,  "asset_class": "sector_equity"},
+    {"fund_code": "206005", "fund_name": "博时标普500ETF联接",    "fund_type": "ETF联接", "benchmark": "标普500",     "region": "美国", "expense_ratio": 0.0085, "mgmt_fee": 0.0075, "custody_fee": 0.001,  "asset_class": "broad_equity"},
+    {"fund_code": "161130", "fund_name": "标普500指数LOF(富国)",  "fund_type": "LOF",     "benchmark": "标普500",     "region": "美国", "expense_ratio": 0.006,  "mgmt_fee": 0.005,  "custody_fee": 0.001,  "asset_class": "broad_equity"},
+    {"fund_code": "002803", "fund_name": "摩根标普500指数",       "fund_type": "被动指数", "benchmark": "标普500",     "region": "美国", "expense_ratio": 0.007,  "mgmt_fee": 0.006,  "custody_fee": 0.001,  "asset_class": "broad_equity"},
     # ── 日本市场 ──────────────────────────────────────
-    {"fund_code": "513880", "fund_name": "华夏野村日经225ETF",    "fund_type": "ETF",     "benchmark": "日经225",     "region": "日本", "expense_ratio": 0.006,  "asset_class": "broad_equity"},
-    {"fund_code": "513000", "fund_name": "华安日本股票ETF",       "fund_type": "ETF",     "benchmark": "MSCI日本",    "region": "日本", "expense_ratio": 0.006,  "asset_class": "broad_equity"},
-    {"fund_code": "164403", "fund_name": "工银日本股票LOF",       "fund_type": "LOF",     "benchmark": "MSCI日本",    "region": "日本", "expense_ratio": 0.018,  "asset_class": "broad_equity"},
-    {"fund_code": "015691", "fund_name": "华泰柏瑞日经225ETF",    "fund_type": "ETF",     "benchmark": "日经225",     "region": "日本", "expense_ratio": 0.006,  "asset_class": "broad_equity"},
-    {"fund_code": "050026", "fund_name": "博时日本ETF联接",       "fund_type": "ETF联接", "benchmark": "日经225",     "region": "日本", "expense_ratio": 0.006,  "asset_class": "broad_equity"},
+    {"fund_code": "513880", "fund_name": "华夏野村日经225ETF",    "fund_type": "ETF",     "benchmark": "日经225",     "region": "日本", "expense_ratio": 0.006,  "mgmt_fee": 0.005,  "custody_fee": 0.001,  "asset_class": "broad_equity"},
+    {"fund_code": "513000", "fund_name": "华安日本股票ETF",       "fund_type": "ETF",     "benchmark": "MSCI日本",    "region": "日本", "expense_ratio": 0.006,  "mgmt_fee": 0.005,  "custody_fee": 0.001,  "asset_class": "broad_equity"},
+    {"fund_code": "164403", "fund_name": "工银日本股票LOF",       "fund_type": "LOF",     "benchmark": "MSCI日本",    "region": "日本", "expense_ratio": 0.018,  "mgmt_fee": 0.015,  "custody_fee": 0.003,  "asset_class": "broad_equity"},
+    {"fund_code": "015691", "fund_name": "华泰柏瑞日经225ETF",    "fund_type": "ETF",     "benchmark": "日经225",     "region": "日本", "expense_ratio": 0.006,  "mgmt_fee": 0.005,  "custody_fee": 0.001,  "asset_class": "broad_equity"},
+    {"fund_code": "050026", "fund_name": "博时日本ETF联接",       "fund_type": "ETF联接", "benchmark": "日经225",     "region": "日本", "expense_ratio": 0.006,  "mgmt_fee": 0.005,  "custody_fee": 0.001,  "asset_class": "broad_equity"},
     # ── 欧洲/德国市场 ─────────────────────────────────
-    {"fund_code": "513030", "fund_name": "华安德国DAX ETF",      "fund_type": "ETF",     "benchmark": "DAX",         "region": "德国", "expense_ratio": 0.006,  "asset_class": "broad_equity"},
-    {"fund_code": "160218", "fund_name": "博时德国DAX ETF联接",   "fund_type": "ETF联接", "benchmark": "DAX",         "region": "德国", "expense_ratio": 0.006,  "asset_class": "broad_equity"},
-    {"fund_code": "164701", "fund_name": "招商欧洲精选LOF",       "fund_type": "LOF",     "benchmark": "MSCI欧洲",    "region": "欧洲", "expense_ratio": 0.018,  "asset_class": "broad_equity"},
-    {"fund_code": "001548", "fund_name": "汇添富欧洲市场",        "fund_type": "主动QDII", "benchmark": "MSCI欧洲",    "region": "欧洲", "expense_ratio": 0.0175, "asset_class": "broad_equity"},
-    {"fund_code": "003318", "fund_name": "易方达欧洲基金",        "fund_type": "被动指数", "benchmark": "MSCI欧洲",    "region": "欧洲", "expense_ratio": 0.012,  "asset_class": "broad_equity"},
+    {"fund_code": "513030", "fund_name": "华安德国DAX ETF",      "fund_type": "ETF",     "benchmark": "DAX",         "region": "德国", "expense_ratio": 0.006,  "mgmt_fee": 0.005,  "custody_fee": 0.001,  "asset_class": "broad_equity"},
+    {"fund_code": "160218", "fund_name": "博时德国DAX ETF联接",   "fund_type": "ETF联接", "benchmark": "DAX",         "region": "德国", "expense_ratio": 0.006,  "mgmt_fee": 0.005,  "custody_fee": 0.001,  "asset_class": "broad_equity"},
+    {"fund_code": "164701", "fund_name": "招商欧洲精选LOF",       "fund_type": "LOF",     "benchmark": "MSCI欧洲",    "region": "欧洲", "expense_ratio": 0.018,  "mgmt_fee": 0.015,  "custody_fee": 0.003,  "asset_class": "broad_equity"},
+    {"fund_code": "001548", "fund_name": "汇添富欧洲市场",        "fund_type": "主动QDII", "benchmark": "MSCI欧洲",    "region": "欧洲", "expense_ratio": 0.011,  "mgmt_fee": 0.009,  "custody_fee": 0.002,  "asset_class": "broad_equity"},
+    {"fund_code": "003318", "fund_name": "易方达欧洲基金",        "fund_type": "被动指数", "benchmark": "MSCI欧洲",    "region": "欧洲", "expense_ratio": 0.0132, "mgmt_fee": 0.011,  "custody_fee": 0.0022, "asset_class": "broad_equity"},
     # ── 全球/亚洲 ─────────────────────────────────────
-    {"fund_code": "270042", "fund_name": "广发全球精选",          "fund_type": "主动QDII", "benchmark": "MSCI全球",    "region": "全球", "expense_ratio": 0.018,  "asset_class": "broad_equity"},
-    {"fund_code": "110022", "fund_name": "易方达亚洲精选",        "fund_type": "主动QDII", "benchmark": "MSCI亚洲",    "region": "亚洲", "expense_ratio": 0.018,  "asset_class": "broad_equity"},
-    {"fund_code": "481010", "fund_name": "工银全球股票",          "fund_type": "主动QDII", "benchmark": "MSCI全球",    "region": "全球", "expense_ratio": 0.018,  "asset_class": "broad_equity"},
-    {"fund_code": "485010", "fund_name": "工银全球精选",          "fund_type": "主动QDII", "benchmark": "MSCI全球",    "region": "全球", "expense_ratio": 0.018,  "asset_class": "broad_equity"},
+    {"fund_code": "270023", "fund_name": "广发全球精选",          "fund_type": "主动QDII", "benchmark": "MSCI全球",    "region": "全球", "expense_ratio": 0.0140, "mgmt_fee": 0.012,  "custody_fee": 0.002,  "asset_class": "broad_equity"},
+    {"fund_code": "110022", "fund_name": "易方达亚洲精选",        "fund_type": "主动QDII", "benchmark": "MSCI亚洲",    "region": "亚洲", "expense_ratio": 0.0165, "mgmt_fee": 0.014,  "custody_fee": 0.0025, "asset_class": "broad_equity"},
+    {"fund_code": "481010", "fund_name": "工银全球股票",          "fund_type": "主动QDII", "benchmark": "MSCI全球",    "region": "全球", "expense_ratio": 0.0165, "mgmt_fee": 0.014,  "custody_fee": 0.0025, "asset_class": "broad_equity"},
+    {"fund_code": "485010", "fund_name": "工银全球精选",          "fund_type": "主动QDII", "benchmark": "MSCI全球",    "region": "全球", "expense_ratio": 0.0165, "mgmt_fee": 0.014,  "custody_fee": 0.0025, "asset_class": "broad_equity"},
     # ── 行业主题/商品/债券 ────────────────────────────
-    {"fund_code": "164906", "fund_name": "华宝标普油气LOF",       "fund_type": "LOF",     "benchmark": "标普油气",    "region": "全球", "expense_ratio": 0.0072, "asset_class": "sector_equity"},
-    {"fund_code": "000934", "fund_name": "汇添富全球互联网",      "fund_type": "主动QDII", "benchmark": "纳斯达克100", "region": "美国", "expense_ratio": 0.018,  "asset_class": "growth_equity"},
-    {"fund_code": "519977", "fund_name": "长信全球债券",          "fund_type": "QDII债券", "benchmark": "全球债券",    "region": "全球", "expense_ratio": 0.009,  "asset_class": "bond"},
+    {"fund_code": "164906", "fund_name": "华宝标普油气LOF",       "fund_type": "LOF",     "benchmark": "标普油气",    "region": "全球", "expense_ratio": 0.0072, "mgmt_fee": 0.006,  "custody_fee": 0.0012, "asset_class": "sector_equity"},
+    {"fund_code": "000934", "fund_name": "汇添富全球互联网",      "fund_type": "主动QDII", "benchmark": "纳斯达克100", "region": "美国", "expense_ratio": 0.018,  "mgmt_fee": 0.015,  "custody_fee": 0.003,  "asset_class": "growth_equity"},
+    {"fund_code": "519977", "fund_name": "长信全球债券",          "fund_type": "QDII债券", "benchmark": "全球债券",    "region": "全球", "expense_ratio": 0.009,  "mgmt_fee": 0.007,  "custody_fee": 0.002,  "asset_class": "bond"},
 ]
 
 # 代码 → 真实费率 的快速映射（akshare 路径用它回填，避免清零）
 EXPENSE_RATIO_BY_CODE = {f["fund_code"]: f["expense_ratio"] for f in CORE_QDII_FUNDS}
+MGMT_FEE_BY_CODE      = {f["fund_code"]: f["mgmt_fee"]      for f in CORE_QDII_FUNDS if "mgmt_fee" in f}
+CUSTODY_FEE_BY_CODE   = {f["fund_code"]: f["custody_fee"]   for f in CORE_QDII_FUNDS if "custody_fee" in f}
 
 # 代码 → 资产类别 / 基准 / 地区
 ASSET_CLASS_BY_CODE = {f["fund_code"]: f["asset_class"] for f in CORE_QDII_FUNDS}

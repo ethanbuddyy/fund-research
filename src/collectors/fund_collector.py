@@ -4,7 +4,7 @@ import numpy as np
 from datetime import datetime, timedelta
 from pathlib import Path
 from ..utils.database import upsert_dataframe, read_table
-from ..utils.fund_universe import CORE_QDII_FUNDS, EXPENSE_RATIO_BY_CODE
+from ..utils.fund_universe import CORE_QDII_FUNDS, EXPENSE_RATIO_BY_CODE, MGMT_FEE_BY_CODE, CUSTODY_FEE_BY_CODE
 
 _DATA_DIR = Path(__file__).parent.parent.parent / "data"
 _NAV_CSV = _DATA_DIR / "fund_nav_seed.csv"
@@ -72,8 +72,9 @@ def _collect_via_akshare(ak) -> list:
                 "company": str(row.get("基金公司", "")),
                 "nav": float(row.get("单位净值", 0) or 0),
                 "nav_date": str(row.get("净值日期", "")),
-                # 真实费率：核心库已知则回填，未知留 None（不要清零，否则成本分恒满分）
                 "expense_ratio": EXPENSE_RATIO_BY_CODE.get(code),
+                "mgmt_fee":      MGMT_FEE_BY_CODE.get(code),
+                "custody_fee":   CUSTODY_FEE_BY_CODE.get(code),
             })
         print(f"[OK] akshare QDII基金列表: {len(funds)} 只")
         # 合并核心基金确保覆盖（带真实费率与基准）
@@ -81,13 +82,15 @@ def _collect_via_akshare(ak) -> list:
         for cf in CORE_QDII_FUNDS:
             if cf["fund_code"] not in existing_codes:
                 funds.append({
-                    "fund_code": cf["fund_code"],
-                    "fund_name": cf["fund_name"],
-                    "fund_type": cf["fund_type"],
+                    "fund_code":   cf["fund_code"],
+                    "fund_name":   cf["fund_name"],
+                    "fund_type":   cf["fund_type"],
                     "manager": "", "company": "",
                     "nav": 1.0, "nav_date": "",
                     "expense_ratio": cf["expense_ratio"],
-                    "benchmark": cf.get("benchmark", ""),
+                    "mgmt_fee":    cf.get("mgmt_fee"),
+                    "custody_fee": cf.get("custody_fee"),
+                    "benchmark":   cf.get("benchmark", ""),
                 })
         return funds
     except Exception as e:
@@ -116,15 +119,17 @@ def _build_core_list() -> list:
     funds = []
     for cf in CORE_QDII_FUNDS:
         funds.append({
-            "fund_code": cf["fund_code"],
-            "fund_name": cf["fund_name"],
-            "fund_type": cf["fund_type"],
+            "fund_code":   cf["fund_code"],
+            "fund_name":   cf["fund_name"],
+            "fund_type":   cf["fund_type"],
             "manager": "",
             "company": "",
             "nav": 1.0,
-            "nav_date": datetime.now().strftime("%Y-%m-%d"),
-            "expense_ratio": cf["expense_ratio"],  # 真实费率
-            "benchmark": cf.get("benchmark", ""),
+            "nav_date":    datetime.now().strftime("%Y-%m-%d"),
+            "expense_ratio": cf["expense_ratio"],
+            "mgmt_fee":    cf.get("mgmt_fee"),
+            "custody_fee": cf.get("custody_fee"),
+            "benchmark":   cf.get("benchmark", ""),
         })
     return funds
 
@@ -154,7 +159,8 @@ def _save_fund_list(fund_list: list):
         return
     df = pd.DataFrame(fund_list)
     df = df[[c for c in ["fund_code", "fund_name", "fund_type", "manager", "company",
-                          "nav", "nav_date", "expense_ratio", "benchmark"] if c in df.columns]]
+                          "nav", "nav_date", "expense_ratio", "mgmt_fee", "custody_fee",
+                          "benchmark"] if c in df.columns]]
     df["fund_code"] = df["fund_code"].astype(str)
     upsert_dataframe(df, "fund_list", ["fund_code"])
     print(f"[DB] 基金列表已保存 {len(df)} 只")

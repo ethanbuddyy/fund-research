@@ -4,8 +4,12 @@ data/
 # 日志
 *.log
 
-# 配置文件（含 API Key，不入版本库；使用环境变量 FRED_API_KEY）
+# 配置文件（含 API Key 或个人持仓，不入版本库）
 config/settings.yaml
+config/my_holdings.yaml
+
+# 生成的报告（根目录，非 src/reports/）
+/reports/
 
 # Python
 __pycache__/

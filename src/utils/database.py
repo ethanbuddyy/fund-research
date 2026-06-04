@@ -16,6 +16,20 @@ def init_database():
     conn = get_connection()
     cur = conn.cursor()
 
+    # 增量迁移：为已有表添加新列（SQLite 不支持 IF NOT EXISTS on ALTER，用 try/except）
+    _migrations = [
+        "ALTER TABLE fund_list ADD COLUMN mgmt_fee REAL",
+        "ALTER TABLE fund_list ADD COLUMN custody_fee REAL",
+        "ALTER TABLE fund_holdings ADD COLUMN turnover_rates TEXT",
+        "ALTER TABLE fund_holdings ADD COLUMN region_breakdown TEXT",
+    ]
+    for sql in _migrations:
+        try:
+            cur.execute(sql)
+        except Exception:
+            pass
+    conn.commit()
+
     cur.executescript("""
     CREATE TABLE IF NOT EXISTS macro_data (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -170,6 +184,46 @@ def init_database():
         articles_count INTEGER,
         updated_at TEXT DEFAULT (datetime('now')),
         PRIMARY KEY (date, source)
+    );
+
+    CREATE TABLE IF NOT EXISTS fund_manager (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        fund_code TEXT NOT NULL,
+        manager_id TEXT,
+        name TEXT NOT NULL,
+        work_start_date TEXT,
+        total_assets_managed TEXT,
+        avg_annual_return REAL,
+        return_1y REAL,
+        return_3y REAL,
+        return_5y REAL,
+        managed_funds TEXT,
+        description TEXT,
+        source TEXT DEFAULT 'eastmoney',
+        updated_at TEXT DEFAULT (datetime('now')),
+        UNIQUE(fund_code, name)
+    );
+
+    CREATE TABLE IF NOT EXISTS fund_fees (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        fund_code TEXT NOT NULL,
+        fee_type TEXT NOT NULL,
+        amount_min REAL,
+        amount_max REAL,
+        rate REAL,
+        rate_desc TEXT,
+        source TEXT DEFAULT 'akshare',
+        updated_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS fund_turnover (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        fund_code TEXT NOT NULL,
+        year INTEGER NOT NULL,
+        turnover_rate REAL,
+        source TEXT DEFAULT 'eastmoney',
+        updated_at TEXT DEFAULT (datetime('now')),
+        UNIQUE(fund_code, year)
     );
     """)
     conn.commit()

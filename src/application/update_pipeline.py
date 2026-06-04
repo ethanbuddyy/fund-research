@@ -50,7 +50,16 @@ def run_update(logger=None) -> dict:
 
     from src.collectors.eastmoney_collector import collect_eastmoney
     collect_eastmoney(pool_codes)
-    _log("[3.2/5] 天天基金真实净值/持仓富集完成")
+    _log("[3.2/5] 天天基金净值/持仓/经理/换手率富集完成")
+
+    # 场内 ETF/LOF QDII（513100 等）走 Baostock 行情通道，与场外基金互不干扰
+    from src.collectors.baostock_etf_collector import collect_etf_nav
+    etf_count = collect_etf_nav()
+    _log(f"[3.3/5] 场内 ETF/LOF 净值采集完成：{etf_count} 只")
+
+    from src.collectors.fund_fee_collector import collect_fund_fees
+    collect_fund_fees(pool_codes)
+    _log("[3.4/5] 申购/赎回费率采集完成")
 
     from src.collectors.valuation_collector import collect_valuation_data
     collect_valuation_data()

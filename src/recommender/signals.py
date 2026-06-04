@@ -27,8 +27,11 @@ def _trend_score() -> float:
     df = df.sort_values("date")
     prices = df["close"].astype(float)
     current = float(prices.iloc[-1])
-    ma252 = float(prices.tail(252).mean())
-    return trend_score_from_deviation((current - ma252) / ma252)
+    window = min(252, len(prices))
+    if window < 252:
+        print(f"[WARN] 趋势因子：SP500 数据仅 {window} 条（不足252），使用 {window} 日均线代替年线")
+    ma = float(prices.tail(window).mean())
+    return trend_score_from_deviation((current - ma) / ma)
 
 
 def generate_market_signal(save: bool = True) -> dict:
@@ -51,10 +54,13 @@ def generate_market_signal(save: bool = True) -> dict:
     macro_adj = float(np.clip(macro_score + fed_direction, 1, 10))
 
     # 第6因子：全球宏观综合评分（QDII资产规模权重的跨区域加权）
+    # global_macro 必须在此处赋值，供 compute_global_macro_score 和后续 signal dict 共用
     try:
-        from ..analyzers.global_macro_analyzer import compute_global_macro_score
+        from ..analyzers.global_macro_analyzer import analyze_global_macro, compute_global_macro_score
+        global_macro = analyze_global_macro()
         global_macro_score = compute_global_macro_score(global_macro)
     except Exception:
+        global_macro = {"available": False, "regions": {}}
         global_macro_score = 5.0
 
     # 6因子权重（原5因子各×0.90，全球宏观新增10%）：
@@ -98,14 +104,6 @@ def generate_market_signal(save: bool = True) -> dict:
 
     from ..utils import provenance
     data_source = provenance.overall_mode()
-
-    # 全球各区域宏观背景（多区域QDII用；作为上下文，不并入已验证的量化综合信号，
-    # 以免与回测口径不一致）
-    try:
-        from ..analyzers.global_macro_analyzer import analyze_global_macro
-        global_macro = analyze_global_macro()
-    except Exception:
-        global_macro = {"available": False, "regions": {}}
 
     signal = {
         "date": datetime.now().strftime("%Y-%m-%d"),

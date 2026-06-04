@@ -7,7 +7,7 @@ from ..utils.database import read_table
 def analyze_macro_cycle() -> dict:
     """判断当前经济周期阶段并返回分析结果"""
     gdp_df = read_table("macro_data", "series_id = ? ORDER BY date DESC LIMIT 5", ("GDPC1",))
-    cpi_df = read_table("macro_data", "series_id = ? ORDER BY date DESC LIMIT 12", ("CPIAUCSL",))
+    cpi_df = read_table("macro_data", "series_id = ? ORDER BY date DESC LIMIT 13", ("CPIAUCSL",))
     pce_df = read_table("macro_data", "series_id = ? ORDER BY date DESC LIMIT 13", ("PCEPILFE",))
     rate_df = read_table("macro_data", "series_id = ? ORDER BY date DESC LIMIT 12", ("FEDFUNDS",))
     unemploy_df = read_table("macro_data", "series_id = ? ORDER BY date DESC LIMIT 12", ("UNRATE",))
@@ -122,7 +122,7 @@ def _calc_yoy(df: pd.DataFrame) -> float | None:
     df = df.sort_values("date")
     latest = float(df.iloc[-1]["value"]) if pd.notna(df.iloc[-1]["value"]) else None
     prior = float(df.iloc[0]["value"]) if pd.notna(df.iloc[0]["value"]) else None
-    if latest and prior and prior != 0:
+    if latest is not None and prior is not None and prior != 0:
         return (latest / prior - 1) * 100
     return None
 
