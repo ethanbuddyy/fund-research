@@ -146,12 +146,12 @@
 | 命令 | 用途 |
 |:-----|:-----|
 | `python3 run.py` | 完整流程：采集 → 信号 → 评分 → 组合 → 报告（MD + HTML） |
-| `python3 \1.py --backtest` | 同上，并附带回测分析（注入报告第九章） |
-| `python3 \1.py --analyze 513100` | 单只基金综合研判（支持代码或名称关键词） |
-| `python3 \1.py --search 纳斯达克` | 搜索基金代码 |
-| `python3 \1.py --check-holdings` | 持仓健康诊断（读取 `config/my_holdings.yaml`） |
+| `python3 run.py --backtest` | 同上，并附带回测分析（注入报告第九章） |
+| `python3 run.py --analyze 513100` | 单只基金综合研判（支持代码或名称关键词） |
+| `python3 run.py --search 纳斯达克` | 搜索基金代码 |
+| `python3 run.py --check-holdings` | 持仓健康诊断（读取 `config/my_holdings.yaml`） |
 | `python3 scheduler.py` | 每日定时调度（北京时间 08:30） |
-| `python3 \1.py --attribution` | 独立回测 + 因子归因分析 |
+| `python3 backtest.py --attribution` | 独立回测 + 因子归因分析 |
 
 ---
 
