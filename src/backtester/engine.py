@@ -20,6 +20,7 @@ from ..domain.scoring import (
     credit_score_from_spread,
     trend_score_from_deviation,
 )
+from ..domain.factor_config import FACTOR_WEIGHTS as _FACTOR_WEIGHTS, REGION_WEIGHTS_QDII as _REGION_WEIGHTS_BACKTEST
 
 
 # QDII ETF 场内双边摩擦（手续费+买卖价差+汇率）：实测约 0.3–0.5%，保守取 0.5%
@@ -27,22 +28,6 @@ from ..domain.scoring import (
 TRANSACTION_COST_RT = 0.005  # 0.5% 双边（round-trip），按实际换手率扩展
 RF_ANNUAL = 0.02             # 无风险利率假设 2%
 
-# 6因子权重（总和=1.0）
-# 趋势27% + 宏观18% + 估值18% + 情绪13.5% + 信用13.5% + 全球宏观10%
-_FACTOR_WEIGHTS = {
-    "trend":        0.27,
-    "macro":        0.18,
-    "valuation":    0.18,
-    "sentiment":    0.135,
-    "credit":       0.135,
-    "global_macro": 0.10,
-}
-
-# QDII资产规模权重（用于全球宏观因子的区域加权）
-_REGION_WEIGHTS_BACKTEST = {
-    "美国": 0.40, "全球": 0.20, "日本": 0.12,
-    "欧洲": 0.12, "德国": 0.08, "亚洲": 0.08,
-}
 
 
 # ─────────────────────────────────────────────
@@ -651,8 +636,9 @@ def _fetch_sp500_full(market_db: pd.DataFrame) -> pd.Series:
     try:
         import yfinance as yf
         # 用 yf.download 比 Ticker.history 更稳定
+        # 注意：show_errors 参数在 yfinance>=0.2.x 已移除，传入会抛 TypeError，故不再传递。
         raw = yf.download("^GSPC", start="2019-01-01", auto_adjust=True,
-                          progress=False, show_errors=False)
+                          progress=False)
         if raw is not None and not raw.empty:
             # yfinance 返回 MultiIndex 列时取 Close
             if isinstance(raw.columns, pd.MultiIndex):
@@ -663,8 +649,9 @@ def _fetch_sp500_full(market_db: pd.DataFrame) -> pd.Series:
             yf_series = close.dropna().rename("close")
             combined = yf_series.combine_first(db_sp500)
             return combined.sort_index()
-    except Exception:
-        pass
+    except Exception as e:
+        # 不再静默吞掉：补全失败会缩短回测历史区间，必须让用户可见
+        print(f"[WARN] yfinance 补全 SP500 历史失败，仅使用数据库内 SP500（回测区间可能偏短）: {e}")
 
     return db_sp500
 

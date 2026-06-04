@@ -144,128 +144,85 @@ def _save_portfolio_snapshot(core_funds: list, satellite_funds: list, scores_df:
             "satellite": {f["fund_code"]: _info(f) for f in satellite_funds},
         }
         _SNAPSHOT_PATH.write_text(json.dumps(snapshot, ensure_ascii=False), encoding="utf-8")
-    except Exception:
-        pass
+    except Exception as e:
+        # 快照保存是不可降级的写操作：失败会让下次「换仓门槛」与「止损追踪」静默失效，
+        # 必须让用户可见，而非静默吞掉。
+        print(f"[WARN] 组合快照保存失败（将影响下次换仓门槛/止损追踪）: {e}")
 
 
 def _select_core_funds(df: pd.DataFrame, alloc: float,
                        prev_scores: dict, score_threshold: float) -> list:
-    """选取核心仓位（宽基指数，最多3只）。
-
-    首次运行（prev_scores 为空）：直接取分数前3。
-    后续运行：
-      1. 保留上次核心持仓中仍在候选池的基金（不需要超越门槛）；
-      2. 空余槽位用当前最高分的新基金填满（无门槛要求）；
-      3. 若3只槽位均由旧持仓占据，新基金需比最低分旧持仓高出
-         score_threshold 分才能发生替换。
-    """
-    core = df[df["fund_name"].str.contains("|".join(CORE_BENCHMARKS), na=False)]
-    if core.empty:
-        core = df[df["fund_type"].str.contains("ETF|指数|被动", na=False)]
-
-    candidate_codes = core["fund_code"].astype(str).tolist()  # 已按 total_score 降序
-
-    if not prev_scores:
-        selected = candidate_codes[:3]
-    else:
-        # 保留上次持仓中仍在候选池的基金
-        selected: list[str] = [c for c in prev_scores if c in candidate_codes][:3]
-        # 遍历高分候选：补齐空位或尝试替换最低分旧持仓
-        for code in candidate_codes:
-            if len(selected) >= 3 and code in selected:
-                continue
-            if code in selected:
-                continue
-            score_series = core.loc[core["fund_code"].astype(str) == code, "total_score"]
-            if score_series.empty:
-                continue
-            score = float(score_series.iloc[0])
-            if len(selected) < 3:
-                selected.append(code)
-            else:
-                min_code = min(selected, key=lambda c: prev_scores.get(c, 0.0))
-                if score >= prev_scores.get(min_code, 0.0) + score_threshold:
-                    selected.remove(min_code)
-                    selected.append(code)
-            if len(selected) >= 3:
-                break
-
-    picks = core[core["fund_code"].astype(str).isin(selected)].head(3)
-    n = len(picks)
-    if n == 0:
-        return []
-    weight = alloc / n
-    result = []
-    for _, row in picks.iterrows():
-        result.append({
-            "fund_code": str(row["fund_code"]),
-            "fund_name": row.get("fund_name", row["fund_code"]),
-            "fund_type": row.get("fund_type", ""),
-            "signal": row.get("signal", "持有"),
-            "score": row.get("total_score", 0),
-            "performance_score": row.get("performance_score"),
-            "risk_score": row.get("risk_score"),
-            "strategy_score": row.get("strategy_score"),
-            "consistency_score": row.get("consistency_score"),
-            "cost_score": row.get("cost_score"),
-            "expense_ratio": row.get("expense_ratio"),
-            "weight": round(weight * 100, 1),
-            "role": "核心",
-        })
-    return result
+    """选取核心仓位（宽基指数，最多3只）。"""
+    pool = df[df["fund_name"].str.contains("|".join(CORE_BENCHMARKS), na=False)]
+    if pool.empty:
+        pool = df[df["fund_type"].str.contains("ETF|指数|被动", na=False)]
+    return _select_funds(pool, alloc, max_n=3, prev_scores=prev_scores,
+                         score_threshold=score_threshold, role="核心")
 
 
 def _select_satellite_funds(df: pd.DataFrame, alloc: float, exclude_codes: set,
                              prev_scores: dict, score_threshold: float) -> list:
-    """选取卫星仓位（行业/主动/主题，最多2只），换仓逻辑同核心。"""
+    """选取卫星仓位（行业/主动/主题，最多2只）。"""
     sat = df[~df["fund_code"].isin(exclude_codes)]
-    active = sat[sat["fund_type"].str.contains("主动|LOF|行业|主题", na=False)]
-    if active.empty:
-        active = sat
+    pool = sat[sat["fund_type"].str.contains("主动|LOF|行业|主题", na=False)]
+    if pool.empty:
+        pool = sat
+    return _select_funds(pool, alloc, max_n=2, prev_scores=prev_scores,
+                         score_threshold=score_threshold, role="卫星")
 
-    candidate_codes = active["fund_code"].astype(str).tolist()
+
+def _select_funds(pool: pd.DataFrame, alloc: float, max_n: int,
+                  prev_scores: dict, score_threshold: float, role: str) -> list:
+    """
+    换仓门槛选基：首次运行直接取前 max_n；后续运行保留旧持仓，
+    只有新基金比最低分旧持仓高出 score_threshold 分才替换。
+    """
+    candidate_codes = pool["fund_code"].astype(str).tolist()
 
     if not prev_scores:
-        selected = candidate_codes[:2]
+        selected = candidate_codes[:max_n]
     else:
-        selected: list[str] = [c for c in prev_scores if c in candidate_codes][:2]
+        selected: list[str] = [c for c in prev_scores if c in candidate_codes][:max_n]
         for code in candidate_codes:
             if code in selected:
                 continue
-            score_series = active.loc[active["fund_code"].astype(str) == code, "total_score"]
+            score_series = pool.loc[pool["fund_code"].astype(str) == code, "total_score"]
             if score_series.empty:
                 continue
             score = float(score_series.iloc[0])
-            if len(selected) < 2:
+            if len(selected) < max_n:
                 selected.append(code)
             else:
                 min_code = min(selected, key=lambda c: prev_scores.get(c, 0.0))
                 if score >= prev_scores.get(min_code, 0.0) + score_threshold:
                     selected.remove(min_code)
                     selected.append(code)
-            if len(selected) >= 2:
+            if len(selected) >= max_n:
                 break
 
-    candidates = active[active["fund_code"].astype(str).isin(selected)].head(2)
-    n = max(1, len(candidates))
-    result = []
-    for _, row in candidates.iterrows():
-        result.append({
-            "fund_code": str(row["fund_code"]),
-            "fund_name": row.get("fund_name", row["fund_code"]),
-            "fund_type": row.get("fund_type", ""),
-            "signal": row.get("signal", "持有"),
-            "score": row.get("total_score", 0),
-            "performance_score": row.get("performance_score"),
-            "risk_score": row.get("risk_score"),
-            "strategy_score": row.get("strategy_score"),
-            "consistency_score": row.get("consistency_score"),
-            "cost_score": row.get("cost_score"),
-            "expense_ratio": row.get("expense_ratio"),
-            "weight": round(alloc / n * 100, 1),
-            "role": "卫星",
-        })
-    return result
+    picks = pool[pool["fund_code"].astype(str).isin(selected)].head(max_n)
+    n = len(picks)
+    if n == 0:
+        return []
+    weight = round(alloc / n * 100, 1)
+    return [
+        {
+            "fund_code":          str(row["fund_code"]),
+            "fund_name":          row.get("fund_name", row["fund_code"]),
+            "fund_type":          row.get("fund_type", ""),
+            "signal":             row.get("signal", "持有"),
+            "score":              row.get("total_score", 0),
+            "performance_score":  row.get("performance_score"),
+            "risk_score":         row.get("risk_score"),
+            "strategy_score":     row.get("strategy_score"),
+            "consistency_score":  row.get("consistency_score"),
+            "cost_score":         row.get("cost_score"),
+            "expense_ratio":      row.get("expense_ratio"),
+            "weight":             weight,
+            "role":               role,
+        }
+        for _, row in picks.iterrows()
+    ]
 
 
 def _generate_notes(market_signal: dict) -> list[str]:

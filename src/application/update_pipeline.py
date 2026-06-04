@@ -75,10 +75,13 @@ def run_update(logger=None) -> dict:
     from src.utils.config import load_config
     signal = generate_market_signal()
     scores_df = score_all_funds(signal)
-    portfolio = build_portfolio_recommendation(signal)
-    _log(f"[5/5] 投资信号生成完成 → {signal.get('composite_signal', '—')}")
 
-    # ── 组合浮亏追踪 + 止损检测（基于上次快照，需在 build_portfolio 之后）
+    # ── 组合浮亏追踪 + 止损检测 ─────────────────────────────────
+    # 必须在 build_portfolio 之前：update_and_check 读取的是「上次运行」写入的
+    # portfolio_snapshot.json，而 build_portfolio 会用本次推荐覆盖该快照。若放在
+    # build_portfolio 之后，读到的就是刚写入的当前净值，本期收益恒为 0（止损失效）。
+    # 同时，止损若触发须先覆盖 signal 的仓位档位，再据此构建组合，保证
+    # 「建议仓位」与「推荐组合权重」口径一致。
     cfg = load_config()
     stop_loss_pct = float((cfg.get("risk_management") or {}).get("stop_loss_pct") or 0)
     stop_loss_info = None
@@ -87,7 +90,7 @@ def run_update(logger=None) -> dict:
             from src.utils.portfolio_tracker import update_and_check
             stop_loss_info = update_and_check(stop_loss_pct)
             if stop_loss_info.get("triggered"):
-                # 强制降至"减仓防守"档，覆盖信号和组合仓位
+                # 强制降至"减仓防守"档，覆盖信号仓位（须在 build_portfolio 之前）
                 signal["composite_signal"] = "减仓防守"
                 signal["core_allocation"] = 0.35
                 signal["satellite_allocation"] = 0.15
@@ -106,5 +109,9 @@ def run_update(logger=None) -> dict:
         except Exception as e:
             _log(f"[止损] 浮亏追踪失败（不影响主流程）: {e}")
     signal["stop_loss"] = stop_loss_info
+
+    # 组合构建：使用（可能已被止损覆盖的）signal，并写入本次快照供下次止损追踪
+    portfolio = build_portfolio_recommendation(signal)
+    _log(f"[5/5] 投资信号生成完成 → {signal.get('composite_signal', '—')}")
 
     return signal, scores_df, portfolio

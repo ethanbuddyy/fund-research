@@ -149,5 +149,6 @@ def _save_nav_data(nav: float, hwm: float):
             ),
             encoding="utf-8",
         )
-    except Exception:
-        pass
+    except Exception as e:
+        # 净值/高水位持久化失败会让下次回撤计算从错误基准重新开始，必须可见。
+        print(f"[WARN] 止损净值数据保存失败（将影响下次回撤计算基准）: {e}")

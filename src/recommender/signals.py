@@ -11,6 +11,7 @@ from ..analyzers.narrative import generate_narrative
 from ..domain.scoring import (
     classify_signal, credit_score_from_spread, trend_score_from_deviation, apply_user_profile,
 )
+from ..domain.factor_config import FACTOR_WEIGHTS
 
 
 def _credit_score() -> float:
@@ -63,17 +64,13 @@ def generate_market_signal(save: bool = True) -> dict:
         global_macro = {"available": False, "regions": {}}
         global_macro_score = 5.0
 
-    # 6因子权重（原5因子各×0.90，全球宏观新增10%）：
-    #   趋势27% + 宏观18% + 估值18% + 情绪13.5% + 信用13.5% + 全球宏观10%
-    # 设计要点：全球宏观以年度World Bank+月度OECD CLI为基础，数据独立于美股价格；
-    # 并入后"纯标普价格/波动"驱动占比进一步降至约40%。
     composite_raw = (
-        macro_adj            * 0.18
-        + valuation_score    * 0.18
-        + contrarian         * 0.135
-        + trend_score        * 0.27
-        + credit_score       * 0.135
-        + global_macro_score * 0.10
+        macro_adj            * FACTOR_WEIGHTS["macro"]
+        + valuation_score    * FACTOR_WEIGHTS["valuation"]
+        + contrarian         * FACTOR_WEIGHTS["sentiment"]
+        + trend_score        * FACTOR_WEIGHTS["trend"]
+        + credit_score       * FACTOR_WEIGHTS["credit"]
+        + global_macro_score * FACTOR_WEIGHTS["global_macro"]
     )
 
     composite_signal, core_alloc, satellite_alloc, cash_alloc = classify_signal(composite_raw)
