@@ -21,6 +21,24 @@ alphavantage_api_key: ""
 # SQLite 数据库路径（相对于项目根目录）
 db_path: "data/fund_research.db"
 
+# ── AI 增强（可选，全部默认关闭，不配置则系统纯走规则层）─────────
+# 三阶段 LLM 增强：Phase1 市场解析 → Phase2 投资决策 → Phase3 对抗审查。
+ai_analysis:
+  enabled: false                  # 总开关：false 则完全不调用 LLM
+  provider: "anthropic"           # anthropic / deepseek / openai
+  # api_key: ""                   # 也可用环境变量 ANTHROPIC_API_KEY / DEEPSEEK_API_KEY / OPENAI_API_KEY
+  phase1_model: "claude-sonnet-4-6"
+  phase2_model: "claude-sonnet-4-6"
+  skip_on_mock_data: true         # 数据为 mock 时跳过 AI，避免给模拟数据"背书"
+
+  # Phase3 对抗式审查：由"只负责挑错"的子智能体复核 Phase2 决策，专抓
+  # 与量化数据矛盾/无依据/过度自信/遗漏风险/自相矛盾。可提升可靠性，但额外
+  # 消耗 token 且增加延迟，故默认关闭，建议仅对重要输出开启。
+  adversarial_review:
+    enabled: false
+    # model: ""                   # 默认沿用 phase2_model，可单独覆盖
+    max_tokens: 3000
+
 # ── FRED 宏观序列（key 任意，值必须是真实 FRED series id）──
 # 注意：GDPC1 = 实际GDP（剔除通胀），用于经济周期判断；
 #       名义GDP(GDP) 会把通胀算进增长，导致周期判断系统性偏“扩张”。

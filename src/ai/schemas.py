@@ -208,3 +208,71 @@ PHASE2_TOOL = {
         ],
     },
 }
+
+# Phase 3：对抗式审查（adversarial review）。
+# 借鉴 Anthropic 自助分析实践：在 Phase2 决策产出后，由一个"只负责挑错"的子智能体
+# 默认怀疑地复核，专抓「与量化数据相矛盾 / 无依据 / 过度自信 / 遗漏风险 / 自相矛盾」。
+# 实测它能再提升准确率，但显著增加 token 与延迟，故默认关闭、仅对重要输出按需启用。
+PHASE3_TOOL = {
+    "name": "review_investment_decision",
+    "description": "以对抗视角审查投资决策，逐条挑出与量化数据矛盾或无依据的主张",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "overall_verdict": {
+                "type": "string",
+                "enum": ["sound", "minor_concerns", "material_concerns"],
+                "description": (
+                    "总体判定：sound=未发现实质问题；minor_concerns=有可改进的措辞/小瑕疵；"
+                    "material_concerns=存在与数据矛盾或无依据的实质问题，使用前应人工复核。"
+                ),
+            },
+            "confidence": {
+                "type": "string",
+                "enum": ["high", "medium", "low"],
+                "description": "审查员对本次审查结论本身的置信度。",
+            },
+            "findings": {
+                "type": "array",
+                "description": "逐条问题；无问题时返回空数组。按严重程度从高到低排序。",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "claim": {
+                            "type": "string",
+                            "description": "被质疑的原始主张（引用决策中的具体句子或字段）。",
+                        },
+                        "category": {
+                            "type": "string",
+                            "enum": [
+                                "data_contradiction",     # 与给定量化数据直接矛盾
+                                "unsupported_claim",       # 缺乏数据支撑的断言
+                                "overstated_conviction",   # 信心/确定性表述超出证据强度
+                                "missing_risk",            # 遗漏了数据中明显的风险
+                                "internal_inconsistency",  # 决策内部自相矛盾（如仓位与信号不一致）
+                            ],
+                        },
+                        "severity": {
+                            "type": "string",
+                            "enum": ["high", "medium", "low"],
+                        },
+                        "issue": {
+                            "type": "string",
+                            "description": "具体指出问题所在，必须引用相关的量化数值。",
+                        },
+                        "suggested_fix": {
+                            "type": "string",
+                            "description": "应如何修正该主张（更保守的措辞 / 补充风险 / 修正数字）。",
+                        },
+                    },
+                    "required": ["claim", "category", "severity", "issue", "suggested_fix"],
+                },
+            },
+            "summary": {
+                "type": "string",
+                "description": "1-2 句话的审查总结，给使用者一句可读的结论。",
+            },
+        },
+        "required": ["overall_verdict", "confidence", "findings", "summary"],
+    },
+}

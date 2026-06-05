@@ -395,6 +395,7 @@ def _render(signal: dict, portfolio: dict,
         _section_action(portfolio),
         _section_scenario(portfolio),
         _section_global_macro(signal),
+        _section_adversarial(portfolio),
         '</div>',
         _footer(date_str),
     ]
@@ -871,6 +872,64 @@ def _section_global_macro(signal: dict) -> str:
         <tbody>{''.join(rows)}</tbody>
       </table>
     </div>
+  </div>
+</div>"""
+
+
+_VERDICT_HTML = {
+    "sound":             ("green", "🟢 未发现实质问题"),
+    "minor_concerns":    ("amber", "🟡 有需注意的小瑕疵"),
+    "material_concerns": ("red",   "🔴 存在实质问题，使用前请人工复核"),
+}
+_SEV_HTML = {"high": ("red", "🔴 高"), "medium": ("amber", "🟡 中"), "low": ("text-dim", "⚪ 低")}
+_CAT_CN_HTML = {
+    "data_contradiction": "与数据矛盾", "unsupported_claim": "无依据断言",
+    "overstated_conviction": "过度自信", "missing_risk": "遗漏风险",
+    "internal_inconsistency": "自相矛盾",
+}
+
+
+def _section_adversarial(portfolio: dict) -> str:
+    """AI 对抗审查结论（仅启用并有结果时渲染，否则空串）。所有动态文本均转义。"""
+    review = portfolio.get("adversarial_review")
+    if not review:
+        return ""
+    color, label = _VERDICT_HTML.get(review.get("overall_verdict"), ("text-dim", "—"))
+    conf = {"high": "高", "medium": "中", "low": "低"}.get(review.get("confidence"), "—")
+    findings = review.get("findings") or []
+
+    if findings:
+        rows = "".join(f"""
+    <tr>
+      <td style="white-space:nowrap">{_SEV_HTML.get(f.get('severity'), ('text-dim','—'))[1]}</td>
+      <td style="white-space:nowrap;color:var(--text-dim)">{_e(_CAT_CN_HTML.get(f.get('category'), f.get('category')))}</td>
+      <td style="color:var(--text)">{_e((f.get('claim') or '')[:60])}</td>
+      <td style="color:var(--text-dim)">{_e((f.get('issue') or '')[:100])}</td>
+      <td style="color:var(--accent)">{_e((f.get('suggested_fix') or '')[:80])}</td>
+    </tr>""" for f in findings)
+        table = f"""
+    <div class="table-wrap" style="margin-top:12px;">
+      <table>
+        <thead><tr><th>严重度</th><th>类别</th><th>被质疑的主张</th><th>问题</th><th>建议修正</th></tr></thead>
+        <tbody>{rows}</tbody>
+      </table>
+    </div>"""
+    else:
+        table = '<div style="margin-top:10px;color:var(--text-dim);font-size:13px;">未提出具体问题。</div>'
+
+    summary = f'<div style="margin-top:8px;font-size:13px;color:var(--text);">{_e(review.get("summary",""))}</div>' if review.get("summary") else ""
+
+    return f"""
+<div class="section">
+  <div class="section-title">AI 对抗审查</div>
+  <div class="card">
+    <div style="font-size:12px;color:var(--text-dim);margin-bottom:10px;">
+      由独立的「挑错」子智能体复核 AI 投资决策（与数据矛盾 / 无依据 / 过度自信 / 遗漏风险 / 自相矛盾）。此为可靠性防线，非二次背书。
+    </div>
+    <div style="font-size:15px;font-weight:700;color:var(--{color})">{label}</div>
+    <div style="font-size:12px;color:var(--text-dim);margin-top:2px;">审查置信度：{conf}</div>
+    {summary}
+    {table}
   </div>
 </div>"""
 

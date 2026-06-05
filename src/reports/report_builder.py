@@ -56,8 +56,9 @@ def build_report(
     sections.append(_s8_action_plan(signal, portfolio))
     sections.append(_s9_backtest(backtest, signal))
     sections.append(_s10_appendix(signal, scores_df))
+    sections.append(_s11_adversarial_review(portfolio))  # 仅在启用并有审查结果时非空
 
-    content = "\n\n---\n\n".join(sections)
+    content = "\n\n---\n\n".join(s for s in sections if s)
 
     # 报告文件
     out_dir = Path(output_dir)
@@ -826,6 +827,53 @@ def _s9_backtest(backtest: Optional[dict], signal: dict) -> str:
 {factor_attr_md}
 
 > 回测结论仅供参考，不构成投资建议。历史绩效不代表未来表现。"""
+
+
+_VERDICT_LABEL = {
+    "sound": "🟢 未发现实质问题",
+    "minor_concerns": "🟡 有需注意的小瑕疵",
+    "material_concerns": "🔴 存在实质问题，使用前请人工复核",
+}
+_SEVERITY_EMOJI = {"high": "🔴", "medium": "🟡", "low": "⚪"}
+_CATEGORY_CN = {
+    "data_contradiction": "与数据矛盾",
+    "unsupported_claim": "无依据断言",
+    "overstated_conviction": "过度自信",
+    "missing_risk": "遗漏风险",
+    "internal_inconsistency": "自相矛盾",
+}
+
+
+def _s11_adversarial_review(portfolio: dict) -> str:
+    """AI 对抗审查结论（仅当启用并产出审查结果时渲染，否则返回空串）。"""
+    review = portfolio.get("adversarial_review")
+    if not review:
+        return ""
+    verdict = _VERDICT_LABEL.get(review.get("overall_verdict"), review.get("overall_verdict", "—"))
+    conf = {"high": "高", "medium": "中", "low": "低"}.get(review.get("confidence"), "—")
+    findings = review.get("findings") or []
+
+    head = (
+        f"## AI 对抗审查\n\n"
+        f"> 由独立的「挑错」子智能体复核 AI 投资决策，专抓与数据矛盾 / 无依据 / "
+        f"过度自信 / 遗漏风险 / 自相矛盾。此为可靠性防线，非二次背书。\n\n"
+        f"- **审查结论**：{verdict}（审查置信度：{conf}）\n"
+    )
+    if review.get("summary"):
+        head += f"- **小结**：{review['summary']}\n"
+
+    if not findings:
+        return head + "\n_未提出具体问题。_"
+
+    rows = ["", "| 严重度 | 类别 | 被质疑的主张 | 问题 | 建议修正 |", "|---|---|---|---|---|"]
+    for f in findings:
+        sev = _SEVERITY_EMOJI.get(f.get("severity"), "") + (f.get("severity") or "")
+        cat = _CATEGORY_CN.get(f.get("category"), f.get("category", "—"))
+        rows.append(
+            f"| {sev} | {cat} | {(f.get('claim') or '')[:50]} "
+            f"| {(f.get('issue') or '')[:80]} | {(f.get('suggested_fix') or '')[:60]} |"
+        )
+    return head + "\n".join(rows)
 
 
 def _s10_appendix(signal: dict, scores_df: Optional[pd.DataFrame]) -> str:

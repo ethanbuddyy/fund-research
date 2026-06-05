@@ -6,9 +6,9 @@
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python&logoColor=white)](https://python.org)
 [![Data](https://img.shields.io/badge/数据源-FRED%20%7C%20multpl%20%7C%20yfinance%20%7C%20天天基金-green)](#二数据接口)
-[![AI](https://img.shields.io/badge/AI%20增强-Claude%20Phase1%2FPhase2-orange?logo=anthropic)](https://anthropic.com)
+[![AI](https://img.shields.io/badge/AI%20增强-Phase1%2F2%2F3%20(含对抗审查)-orange?logo=anthropic)](https://anthropic.com)
 [![MCP](https://img.shields.io/badge/MCP-4%20服务器-purple)](#三mcp-决策分析扩展)
-[![Tests](https://img.shields.io/badge/Tests-205%20passing-brightgreen?logo=pytest)](#tests)
+[![Tests](https://img.shields.io/badge/Tests-225%20passing-brightgreen?logo=pytest)](#tests)
 [![Report](https://img.shields.io/badge/报告-Markdown%20%2B%20HTML-informational)](#4-投研报告10-章节)
 
 > ⚠️ **免责声明**：本系统仅供研究与学习，所有输出不构成投资建议。投资有风险，决策需自负。
@@ -425,6 +425,8 @@ fund-research/
 ├── scheduler.py                    # 每日定时调度（北京时间 08:30）
 ├── backtest.py                     # 回测分析入口
 ├── requirements.lock               # 锁定版本（可复现环境）
+├── docs/
+│   └── data_dictionary.md          # 数据字典（表/字段语义，含字段复用约定；改 schema 须同步）
 ├── config/
 │   ├── settings.yaml(.example)    # 配置（API Key + 结构性参数，已 gitignore）
 │   └── my_holdings.yaml           # 个人持仓（gitignore，仅本地使用）
@@ -468,8 +470,9 @@ fund-research/
 │   │   ├── scorer.py              # 基金五维综合评分
 │   │   └── portfolio.py           # 组合构建 + AI Phase 2 注入
 │   ├── ai/                         # AI 增强层（配置开关控制）
-│   │   ├── phase1_market_analyzer.py   # Phase 1：市场解析
-│   │   ├── phase2_portfolio_advisor.py # Phase 2：投资决策
+│   │   ├── phase1_market_analyzer.py     # Phase 1：市场解析
+│   │   ├── phase2_portfolio_advisor.py   # Phase 2：投资决策
+│   │   ├── phase3_adversarial_reviewer.py # Phase 3：对抗式审查（挑错子智能体，默认关闭）
 │   │   ├── schemas.py             # Tool use JSON Schema
 │   │   └── backend.py / client.py / cache_strategy.py
 │   ├── backtester/
@@ -478,7 +481,7 @@ fund-research/
 │       ├── config.py / database.py / provenance.py
 │       ├── portfolio_tracker.py   # 持仓追踪 + 回撤止损
 │       └── fund_universe.py       # 基金标的库 + 分类 / 去重规则
-├── tests/                          # 单元 + 集成测试套件（pytest，205 用例）
+├── tests/                          # 单元 + 集成测试套件（pytest，225 用例）
 │   ├── test_pipeline_integration.py  # 主链路集成：评分→组合→回测（真实调用）
 │   ├── test_backtester_basics.py  # 回测引擎基础校验
 │   ├── test_dataframe_guards.py   # 采集层防护（直接调生产函数，非副本）
@@ -486,9 +489,11 @@ fund-research/
 │   ├── test_domain_labels.py      # 报告阈值→标签判定
 │   ├── test_fund_deep_analysis.py # 单基金研判 + 一票否决
 │   ├── test_ai_phase2.py          # AI Phase2 输出归一化健壮性
+│   ├── test_ai_phase3.py          # AI Phase3 对抗审查归一化 + 报告渲染转义
 │   ├── test_eastmoney_parsers.py  # 天天基金非官方接口解析
 │   ├── test_report_builder.py     # 报告生成器辅助函数
 │   ├── test_html_report.py        # HTML 报告转义（XSS 防护回归）
+│   ├── test_data_dictionary.py    # 数据字典与 schema 白名单同步（防漂移）
 │   ├── test_holdings_checker.py   # 持仓诊断逻辑
 │   └── test_macro_fallback.py     # 宏观数据降级回退
 ├── tools/
@@ -575,7 +580,8 @@ fund-research/
 - ✅ **10 章节 Markdown 投研报告**：首页结论 + 证据链 + 行动计划 + 数据可信度披露
 - ✅ **HTML 可视化报告**：与 Markdown 同步生成，自动复制至 WSL-output 目录
 - ✅ 每日定时调度（北京时区自适应，**信号变化自动通知**，档位变化时 WARNING 级别日志）
-- ✅ **AI 两阶段增强**（Claude Phase 1 市场解析 + Phase 2 投资决策，配置开关，失败自动 fallback）
+- ✅ **AI 三阶段增强**（Phase 1 市场解析 + Phase 2 投资决策 + Phase 3 对抗式审查；配置开关，失败自动 fallback）
+  - Phase 3「挑错」子智能体复核 Phase 2 决策，专抓与数据矛盾/无依据/过度自信/遗漏风险/自相矛盾，结论以独立板块呈现于报告（防「看似合理实则错误」被静默采用）。默认关闭，仅对重要输出按需启用。
 - ✅ **全链路鲁棒性**：NULL/NaN 防御统一补充，静默 `pass` 改为有诊断意义的 `[WARN]` 日志
 - ✅ 报告生成失败不中断数据采集与信号生成主流程
 
@@ -591,6 +597,8 @@ fund-research/
 - ✅ `test_domain_labels` — 报告阈值→标签判定（VIX / 信用 / 趋势业务口径）
 - ✅ `test_fund_deep_analysis` — 单基金 7 维评分辅助函数 + 一票否决（含卡玛比率格式化崩溃回归）
 - ✅ `test_ai_phase2` — AI Phase2 LLM 输出归一化（畸形 JSON 结构容错）
+- ✅ `test_ai_phase3` — AI Phase3 对抗审查归一化、开关短路、报告渲染（含 HTML 转义）
+- ✅ `test_data_dictionary` — 数据字典与 schema 白名单同步 + 字段复用约定已文档化（防漂移）
 - ✅ `test_eastmoney_parsers` — 天天基金 `pingzhongdata` 非官方接口解析容错
 - ✅ `test_report_builder` — 报告生成器提取出的模块级辅助函数
 - ✅ `test_html_report` — HTML 报告外部/AI 文本转义（存储型 XSS 防护回归）

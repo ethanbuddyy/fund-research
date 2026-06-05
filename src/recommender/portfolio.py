@@ -70,6 +70,24 @@ def build_portfolio_recommendation(market_signal: MarketSignal, top_n: int = 10)
                 if notes:
                     portfolio["investment_notes"] = notes
                 portfolio["ai_decision"] = ai_decision
+
+                # ── AI 阶段三：对抗式审查（默认关闭，需显式开启）──────
+                # 由"只负责挑错"的子智能体复核 Phase2 决策，防止看似合理实则
+                # 与数据矛盾的结论被静默采用。额外消耗 token/延迟，故按需启用。
+                try:
+                    from ..ai.phase3_adversarial_reviewer import AdversarialReviewer, is_enabled
+                    if is_enabled():
+                        review = AdversarialReviewer().review(
+                            market_signal=market_signal,
+                            portfolio=portfolio,
+                            ai_decision=ai_decision,
+                        )
+                        if review:
+                            portfolio["adversarial_review"] = review
+                            print(f"[AI Phase3] 对抗审查：{review.get('overall_verdict')}"
+                                  f"（{len(review.get('findings', []))} 项问题）")
+                except Exception as e:
+                    print(f"[AI Phase3] 对抗审查跳过（不影响主流程）: {e}")
         except Exception as e:
             print(f"[AI Phase2] 跳过: {e}")
 
