@@ -26,8 +26,13 @@ def init_database():
     for sql in _migrations:
         try:
             cur.execute(sql)
-        except Exception:
-            pass
+        except sqlite3.OperationalError as e:
+            # 仅吞两类正常情况：①「列已存在」=重复迁移；②「表不存在」=全新库
+            # （迁移在下方 CREATE TABLE 之前执行，新库此时尚无目标表，CREATE 时会带上新列）。
+            # 其它结构性错误必须暴露，否则后续依赖该列的写入会以更隐蔽的方式失败。
+            msg = str(e).lower()
+            if "duplicate column name" not in msg and "no such table" not in msg:
+                raise
     conn.commit()
 
     cur.executescript("""

@@ -162,6 +162,18 @@ def _collect_cape_via_shiller_xls() -> dict:
         return {}
 
 
+def _safe_pe_float(raw) -> float | None:
+    """把 yfinance 偶发返回的非数字 PE（"N/A" 字符串、dict、None）健壮地转为 float。
+    无法转换时返回 None 并告警，绝不抛 ValueError/TypeError 中断采集。"""
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        print(f"[WARN] yfinance PE 值无法转为浮点数: {raw!r}，跳过")
+        return None
+
+
 def _collect_pe_via_yfinance() -> dict:
     """通过 yfinance 获取 SPY 的 trailingPE 作为 sp500_pe 的单点备用。"""
     try:
@@ -169,11 +181,7 @@ def _collect_pe_via_yfinance() -> dict:
         spy = yf.Ticker("SPY")
         info = spy.info
         _pe_raw = info.get("trailingPE") or info.get("forwardPE")
-        try:
-            pe = float(_pe_raw) if _pe_raw is not None else None
-        except (TypeError, ValueError):
-            print(f"[WARN] yfinance PE 值无法转为浮点数: {_pe_raw!r}，跳过")
-            pe = None
+        pe = _safe_pe_float(_pe_raw)
         if pe and pe > 0:
             today = datetime.now().strftime("%Y-%m-%d")
             _save_valuation("sp500_pe", [(today, pe)], source="yfinance")

@@ -12,6 +12,7 @@ from ..domain.scoring import (
     classify_signal, credit_score_from_spread, trend_score_from_deviation, apply_user_profile,
 )
 from ..domain.factor_config import FACTOR_WEIGHTS
+from ..domain.types import MarketSignal
 
 
 def _credit_score() -> float:
@@ -35,7 +36,7 @@ def _trend_score() -> float:
     return trend_score_from_deviation((current - ma) / ma)
 
 
-def generate_market_signal(save: bool = True) -> dict:
+def generate_market_signal(save: bool = True) -> MarketSignal:
     cfg = load_config()
 
     macro = analyze_macro_cycle()
@@ -102,7 +103,7 @@ def generate_market_signal(save: bool = True) -> dict:
     from ..utils import provenance
     data_source = provenance.overall_mode()
 
-    signal = {
+    signal: MarketSignal = {
         "date": datetime.now().strftime("%Y-%m-%d"),
         "data_source": data_source,                 # real / partial / mock
         "data_quality": provenance.read_all(),

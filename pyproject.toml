@@ -1,0 +1,5 @@
+[tool.pytest.ini_options]
+# 只收集项目自有测试，避免把 vendored 的 tools/stockreport-mcp 第三方测试一并跑进来
+testpaths = ["tests"]
+norecursedirs = ["tools", ".venv", "venv", "*.egg-info", "build", "dist"]
+addopts = "-ra"

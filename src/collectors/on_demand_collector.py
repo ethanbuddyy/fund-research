@@ -88,8 +88,10 @@ def recompute_performance(fund_code: str) -> bool:
         perf = _calc_performance(fund_code)
         if perf:
             upsert_dataframe(pd.DataFrame([perf]), "fund_performance", ["fund_code"])
-    except Exception:
-        pass
+    except Exception as e:
+        # 绩效重算失败会让 fund_performance 停留在旧值而调用方仍收到 True，
+        # 评分据此判断会用陈旧数据，必须可见。
+        print(f"[WARN] {fund_code} 绩效重算失败（fund_performance 维持旧值）: {e}")
     return True
 
 

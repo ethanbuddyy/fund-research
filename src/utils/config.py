@@ -1,6 +1,22 @@
+import re
 import yaml
 import os
 from pathlib import Path
+
+# 形如 YOUR_FRED_API_KEY_HERE / YOUR-XXX-HERE 的占位符：非空字符串（truthy），
+# 若被下游当成有效 key 会发起注定 401 的请求。回退到 example 时尤其常见。
+_PLACEHOLDER_RE = re.compile(r"^YOUR[_\- ].*HERE$", re.IGNORECASE)
+
+# 顶层 API Key 字段 → 对应的环境变量名（环境变量优先于配置文件）
+_API_KEY_ENV = {
+    "fred_api_key": "FRED_API_KEY",
+    "finnhub_api_key": "FINNHUB_API_KEY",
+    "alphavantage_api_key": "ALPHAVANTAGE_API_KEY",
+}
+
+
+def _is_placeholder(value) -> bool:
+    return isinstance(value, str) and bool(_PLACEHOLDER_RE.match(value.strip()))
 
 
 def load_config() -> dict:
@@ -18,10 +34,18 @@ def load_config() -> dict:
                 "请将 config/settings.yaml.example 复制为 config/settings.yaml 并完成配置"
             )
     with open(config_path, "r", encoding="utf-8") as f:
-        cfg = yaml.safe_load(f)
-    # 环境变量优先于配置文件中的 API Key
-    if os.environ.get("FRED_API_KEY"):
-        cfg["fred_api_key"] = os.environ["FRED_API_KEY"]
+        cfg = yaml.safe_load(f) or {}
+
+    # API Key 解析：环境变量优先；占位符值显式置空，避免被下游误当作有效 key。
+    for key, env_name in _API_KEY_ENV.items():
+        env_val = os.environ.get(env_name)
+        if env_val:
+            cfg[key] = env_val
+            continue
+        if _is_placeholder(cfg.get(key)):
+            print(f"[WARN] 配置项 {key} 仍是占位符（{cfg.get(key)!r}），"
+                  f"已置空 → 相关数据源将降级为模拟/回退（可设置环境变量 {env_name} 启用真实数据）")
+            cfg[key] = ""
     return cfg
 
 

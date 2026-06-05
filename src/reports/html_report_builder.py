@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import html
 import math
 from datetime import datetime
 from pathlib import Path
@@ -34,6 +35,14 @@ def build_html_report(
 # ─────────────────────────────────────────────────────────────
 # 工具函数
 # ─────────────────────────────────────────────────────────────
+
+def _e(v) -> str:
+    """转义插入 HTML 的动态文本（AI 叙事 / 基金名 / 新闻源等外部来源），
+    防止 `<`、`&`、`<script>` 破坏排版或在浏览器打开报告时构成存储型 XSS。
+    数值字段无需调用本函数。"""
+    if v is None:
+        return ""
+    return html.escape(str(v))
 
 def _f(v, decimals=2) -> str:
     if v is None: return "—"
@@ -534,11 +543,11 @@ def _section_market(signal: dict, composite: str, raw_score: float) -> str:
     <div class="card" style="display:flex;flex-direction:column;gap:14px;">
       <div>
         <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px;">当前主要矛盾</div>
-        <div class="narrative">{contradiction or '（暂无）'}</div>
+        <div class="narrative">{_e(contradiction) or '（暂无）'}</div>
       </div>
       <div style="flex:1;">
         <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px;">市场叙事</div>
-        <div style="font-size:13px;line-height:1.8;color:var(--text);">{(narrative_text or '').replace(chr(10), '<br>')[:600]}</div>
+        <div style="font-size:13px;line-height:1.8;color:var(--text);">{_e((narrative_text or '')[:600]).replace(chr(10), '<br>')}</div>
       </div>
     </div>
   </div>
@@ -547,7 +556,7 @@ def _section_market(signal: dict, composite: str, raw_score: float) -> str:
 
 def _section_allocation(portfolio: dict, core_pct, sat_pct, cash_pct) -> str:
     notes = portfolio.get("investment_notes") or []
-    notes_html = "".join(f'<li style="margin-bottom:6px;">{n}</li>' for n in notes[:5])
+    notes_html = "".join(f'<li style="margin-bottom:6px;">{_e(n)}</li>' for n in notes[:5])
 
     return f"""
 <div class="section">
@@ -612,7 +621,7 @@ def _section_funds(portfolio: dict) -> str:
     <tr>
       <td><span style="font-family:monospace;font-size:12px;color:var(--text-dim)">{code}</span></td>
       <td style="max-width:200px;">
-        <div style="font-weight:600;color:var(--text-bright);margin-bottom:2px;">{name[:28]}</div>
+        <div style="font-weight:600;color:var(--text-bright);margin-bottom:2px;">{_e(name[:28])}</div>
         {role_tag}
       </td>
       <td class="td-right" style="font-weight:700;color:var(--accent)">{weight:.1f}%</td>
@@ -621,7 +630,7 @@ def _section_funds(portfolio: dict) -> str:
       <td class="td-right">{risk_s}</td>
       <td class="td-right">{er_str}</td>
       <td class="td-center">{sig_tag}</td>
-      <td style="max-width:220px;font-size:12px;color:var(--text-dim);line-height:1.5">{reason}</td>
+      <td style="max-width:220px;font-size:12px;color:var(--text-dim);line-height:1.5">{_e(reason)}</td>
     </tr>""")
 
     return f"""
@@ -660,7 +669,7 @@ def _section_alternates(portfolio: dict) -> str:
         rows.append(f"""
     <tr>
       <td><span style="font-family:monospace;font-size:12px;color:var(--text-dim)">{code}</span></td>
-      <td style="color:var(--text)">{name[:30]}</td>
+      <td style="color:var(--text)">{_e(name[:30])}</td>
       <td class="td-center"><span style="font-weight:700;color:{c}">{_f(sc,1)}</span></td>
       <td class="td-right">{_f(f.get('performance_score'),1)}</td>
       <td class="td-right">{_f(f.get('risk_score'),1)}</td>
@@ -743,7 +752,7 @@ def _section_action(portfolio: dict) -> str:
         items.append(f"""
     <li class="trigger-item">
       <div class="trigger-icon {cls}">{icons[i % len(icons)]}</div>
-      <div style="font-size:13px;color:var(--text);line-height:1.7">{note}</div>
+      <div style="font-size:13px;color:var(--text);line-height:1.7">{_e(note)}</div>
     </li>""")
 
     for i, trig in enumerate(trigs[:4]):
@@ -756,9 +765,9 @@ def _section_action(portfolio: dict) -> str:
     <li class="trigger-item">
       <div class="trigger-icon {cls}">!</div>
       <div style="font-size:13px;line-height:1.7">
-        <span style="color:var(--text-dim)">触发：</span><span style="color:var(--text)">{cond}</span>
+        <span style="color:var(--text-dim)">触发：</span><span style="color:var(--text)">{_e(cond)}</span>
         <span style="color:var(--border2);margin:0 6px">→</span>
-        <span style="color:var(--accent);font-weight:600">{action}</span>
+        <span style="color:var(--accent);font-weight:600">{_e(action)}</span>
       </div>
     </li>""")
 
@@ -787,7 +796,8 @@ def _section_scenario(portfolio: dict) -> str:
         return ""
 
     def _clip(s, n=200):
-        return (s or "")[:n] + ("…" if len(s or "") > n else "")
+        clipped = (s or "")[:n] + ("…" if len(s or "") > n else "")
+        return _e(clipped)
 
     return f"""
 <div class="section">
@@ -836,8 +846,8 @@ def _section_global_macro(signal: dict) -> str:
 
         rows.append(f"""
     <tr>
-      <td style="font-weight:600;color:var(--text-bright)">{region}{star}</td>
-      <td><span class="macro-label {cls}">{emoji} {label}</span></td>
+      <td style="font-weight:600;color:var(--text-bright)">{_e(region)}{star}</td>
+      <td><span class="macro-label {cls}">{emoji} {_e(label)}</span></td>
       <td class="td-right {_ret_class(score) if score else ''}">{_f(score,1)}/10</td>
       <td class="td-right {_ret_class(gdp) if gdp else ''}">{_pct(gdp,1,True) if gdp is not None else '—'}</td>
       <td class="td-right {'neg' if infl and infl>3 else ''}">{_pct(infl,1) if infl is not None else '—'}</td>

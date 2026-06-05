@@ -4,6 +4,7 @@ import pandas as pd
 from pathlib import Path
 from ..utils.database import read_table
 from ..utils.config import load_config
+from ..domain.types import MarketSignal, PortfolioRecommendation
 
 _SNAPSHOT_PATH = Path(__file__).parent.parent.parent / "data" / "portfolio_snapshot.json"
 
@@ -12,7 +13,7 @@ CORE_BENCHMARKS = ["标普500", "S&P", "纳斯达克100", "MSCI全球", "全球"
 SATELLITE_BENCHMARKS = ["科技", "医疗", "能源", "亚洲", "主动"]
 
 
-def build_portfolio_recommendation(market_signal: dict, top_n: int = 10) -> dict:
+def build_portfolio_recommendation(market_signal: MarketSignal, top_n: int = 10) -> PortfolioRecommendation:
     scores_df = read_table("fund_scores")
     funds_df = read_table("fund_list")
     cfg = load_config()
@@ -42,7 +43,7 @@ def build_portfolio_recommendation(market_signal: dict, top_n: int = 10) -> dict
                                               score_threshold=score_threshold)
 
     total_invested = core_alloc + satellite_alloc
-    portfolio = {
+    portfolio: PortfolioRecommendation = {
         "composite_signal": market_signal.get("composite_signal"),
         "core_allocation_pct": round(core_alloc * 100, 0),
         "satellite_allocation_pct": round(satellite_alloc * 100, 0),
@@ -94,13 +95,16 @@ def _load_previous_codes() -> tuple[dict[str, float], dict[str, float]]:
     """读取上次推荐组合，返回 (core_scores, satellite_scores) 两个 {code: score} 字典。
     首次运行或文件缺失/格式旧版时返回两个空字典（不触发门槛约束）。
     """
+    if not _SNAPSHOT_PATH.exists():
+        return {}, {}  # 首次运行属正常，不告警
     try:
-        if _SNAPSHOT_PATH.exists():
-            raw = json.loads(_SNAPSHOT_PATH.read_text(encoding="utf-8"))
-            if isinstance(raw, dict) and "core" in raw and "satellite" in raw:
-                return _extract_scores(raw["core"]), _extract_scores(raw["satellite"])
+        raw = json.loads(_SNAPSHOT_PATH.read_text(encoding="utf-8"))
+        if isinstance(raw, dict) and "core" in raw and "satellite" in raw:
+            return _extract_scores(raw["core"]), _extract_scores(raw["satellite"])
         return {}, {}
-    except Exception:
+    except Exception as e:
+        # 文件存在却读不出 = 损坏，换仓门槛会失效（本期所有持仓都按新基计算），必须可见。
+        print(f"[WARN] 组合快照损坏，换仓门槛本期不生效: {e}")
         return {}, {}
 
 
@@ -263,7 +267,7 @@ def _generate_notes(market_signal: dict) -> list[str]:
     return notes
 
 
-def _empty_portfolio(market_signal: dict) -> dict:
+def _empty_portfolio(market_signal: MarketSignal) -> PortfolioRecommendation:
     return {
         "composite_signal": market_signal.get("composite_signal", "标配稳健"),
         "core_allocation_pct": 60,

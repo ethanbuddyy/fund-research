@@ -44,8 +44,10 @@ def score_all_funds(market_signal: dict) -> pd.DataFrame:
                     "bond_ratio":  row.get("bond_ratio"),
                     "cash_ratio":  row.get("cash_ratio"),
                 }
-    except Exception:
-        pass
+    except Exception as e:
+        # 持仓数据加载失败会让所有基金的 strategy_match 退化为无持仓口径，
+        # 评分系统性偏移，必须可见（仍以空 map 继续，不阻断主流程）。
+        print(f"[WARN] 持仓数据加载失败，strategy_match 将以无持仓口径评分: {e}")
 
     # ── Pass 1: 计算所有基金的原始指标 ────────────────────────────
     raw_rows = []

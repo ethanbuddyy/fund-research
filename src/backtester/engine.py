@@ -102,6 +102,9 @@ def run_backtest(
     if len(rebalance_dates) < 4:
         return {"error": f"回测区间过短（{len(rebalance_dates)} 个调仓日），至少需要 4 个月"}
 
+    # 净值表按基金预切片一次，供下方各调仓期的区间收益查找复用（避免整表反复过滤）
+    nav_by_code = _index_nav_by_code(fund_nav)
+
     records = []
     # 等权基准：全仓买入所有可用基金，不择时不择基，隔离"选基"vs"择时"贡献
     ewbh_all_codes = fund_list["fund_code"].astype(str).tolist()
@@ -156,7 +159,7 @@ def run_backtest(
 
         # 策略收益 = 基金组合收益 × 投资仓位 − 摩擦成本（按换手率加权）
         invested = signal["core_allocation"] + signal["satellite_allocation"]
-        port_ret = _portfolio_period_return(fund_nav, selected_codes, t0, t1)
+        port_ret = _portfolio_period_return(nav_by_code, selected_codes, t0, t1)
         strat_ret = port_ret * invested - TRANSACTION_COST_RT * turnover * invested
 
         # 基准1：标普500买入持有
@@ -164,7 +167,7 @@ def run_backtest(
         # 基准2：60/40（标普500 60% + 无风险现金 40%）
         b6040_ret = sp500_ret * 0.6 + (RF_ANNUAL / 12) * 0.4
         # 基准3：等权全仓基金买入持有（无择时无择基，隔离信号贡献）
-        ewbh_ret  = _portfolio_period_return(fund_nav, ewbh_all_codes, t0, t1)
+        ewbh_ret  = _portfolio_period_return(nav_by_code, ewbh_all_codes, t0, t1)
 
         rec = {
             "date":          t0,
@@ -202,7 +205,7 @@ def run_backtest(
                     turnover_corr = len(cur_set_corr.symmetric_difference(prev_selected_corr)) / n_t
                 prev_selected_corr = cur_set_corr
 
-                port_ret_corr = _portfolio_period_return(fund_nav, sel_corr, t0, t1)
+                port_ret_corr = _portfolio_period_return(nav_by_code, sel_corr, t0, t1)
                 rec["corrected_return"] = (
                     port_ret_corr * invested - TRANSACTION_COST_RT * turnover_corr * invested
                 )
@@ -586,20 +589,40 @@ def _strategy_score(fund_row, signal: dict) -> float:
 # 收益计算
 # ─────────────────────────────────────────────
 
-def _portfolio_period_return(nav_df: pd.DataFrame, fund_codes: list,
+def _index_nav_by_code(nav_df: pd.DataFrame) -> dict:
+    """把整张净值表按 fund_code 预切片为 {code: 以 date 升序为索引的 nav Series}。
+
+    回测主循环对每个调仓期、每只基金各取一次区间端点净值；若每次都对整表做
+    `nav_df[nav_df["fund_code"]==code]` 布尔过滤，复杂度为 O(periods×funds×rows)。
+    这里一次性 groupby 预切片，循环内改用 Series.asof() 做 O(log n) 端点查找。
+    """
+    out = {}
+    for code, g in nav_df.groupby("fund_code"):
+        s = g.sort_values("date").set_index("date")["nav"].astype(float)
+        out[str(code)] = s
+    return out
+
+
+def _portfolio_period_return(nav_by_code: dict, fund_codes: list,
                               t0: pd.Timestamp, t1: pd.Timestamp) -> float:
-    """等权基金组合在 [t0, t1] 的区间收益。"""
+    """等权基金组合在 [t0, t1] 的区间收益。
+
+    nav_by_code 为 `_index_nav_by_code` 的预切片结果。asof(t) 返回索引 <= t 的
+    最后一个净值（即「t 当日或之前的最新净值」），与旧版 `[date<=t].iloc[-1]` 等价；
+    端点早于该基金首条净值时 asof 返回 NaN，与旧版的 empty 跳过等价。
+    """
     returns = []
     for code in fund_codes:
-        fn = nav_df[nav_df["fund_code"] == code].sort_values("date")
-        v0 = fn[fn["date"] <= t0]
-        v1 = fn[fn["date"] <= t1]
-        if v0.empty or v1.empty:
+        s = nav_by_code.get(str(code))
+        if s is None or s.empty:
             continue
-        v0v = float(v0.iloc[-1]["nav"])
-        v1v = float(v1.iloc[-1]["nav"])
+        v0v = s.asof(t0)
+        v1v = s.asof(t1)
+        if pd.isna(v0v) or pd.isna(v1v):
+            continue
+        v0v = float(v0v)
         if v0v > 0:
-            returns.append(v1v / v0v - 1)
+            returns.append(float(v1v) / v0v - 1)
     return float(np.mean(returns)) if returns else 0.0
 
 
@@ -770,6 +793,8 @@ def run_factor_attribution(
         return {"error": "回测区间过短"}
 
     ewbh_codes = fund_list["fund_code"].astype(str).tolist()
+    # 净值表预切片一次，7 次权重回测、每次所有调仓期共用（避免整表反复过滤）
+    nav_by_code_fa = _index_nav_by_code(fund_nav)
 
     def _run_with_weights(fw: dict) -> pd.Series:
         """内部快速回测循环，返回月度收益序列。"""
@@ -798,7 +823,7 @@ def run_factor_attribution(
             prev = cur
 
             invested = sig["core_allocation"] + sig["satellite_allocation"]
-            port_ret = _portfolio_period_return(fund_nav, sel, t0, t1)
+            port_ret = _portfolio_period_return(nav_by_code_fa, sel, t0, t1)
             rets.append(port_ret * invested - TRANSACTION_COST_RT * turnover * invested)
 
         return pd.Series(rets)

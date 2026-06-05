@@ -120,22 +120,26 @@ def _query_period_returns(all_funds: dict) -> dict[str, float]:
 
 
 def _load_snapshot() -> dict | None:
+    if not _SNAPSHOT_PATH.exists():
+        return None  # 首次运行属正常，不告警
     try:
-        if _SNAPSHOT_PATH.exists():
-            return json.loads(_SNAPSHOT_PATH.read_text(encoding="utf-8"))
-    except Exception:
-        pass
-    return None
+        return json.loads(_SNAPSHOT_PATH.read_text(encoding="utf-8"))
+    except Exception as e:
+        # 文件存在却读不出 = 损坏，止损追踪会从空基准重来，必须可见。
+        print(f"[WARN] 组合快照损坏，止损追踪将重置基准: {e}")
+        return None
 
 
 def _load_nav_data() -> dict:
+    if not _NAV_PATH.exists():
+        return {"nav": 100.0, "hwm": 100.0}  # 首次运行属正常
     try:
-        if _NAV_PATH.exists():
-            data = json.loads(_NAV_PATH.read_text(encoding="utf-8"))
-            return {"nav": float(data.get("nav", 100.0)), "hwm": float(data.get("hwm", 100.0))}
-    except Exception:
-        pass
-    return {"nav": 100.0, "hwm": 100.0}
+        data = json.loads(_NAV_PATH.read_text(encoding="utf-8"))
+        return {"nav": float(data.get("nav", 100.0)), "hwm": float(data.get("hwm", 100.0))}
+    except Exception as e:
+        # 文件存在却读不出 = 损坏，回撤会从默认基准重算，必须可见。
+        print(f"[WARN] 止损净值数据损坏，回撤基准重置为 100: {e}")
+        return {"nav": 100.0, "hwm": 100.0}
 
 
 def _save_nav_data(nav: float, hwm: float):
