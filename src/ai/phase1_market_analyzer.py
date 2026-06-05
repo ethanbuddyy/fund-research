@@ -108,6 +108,23 @@ def _format_signal_data(signal: dict) -> str:
                 f"评分{data.get('score', 'N/A')}/10（{data.get('label', 'N/A')}）"
             )
 
+    # RAG：注入检索到的相关证据（retrieval.inject_into_ai 门控；关闭则下方块为空、输出逐字不变）
+    try:
+        from ..retrieval.recall import evidence_block
+        kw = " ".join(
+            s for s in [
+                macro.get("cycle", ""),
+                val.get("valuation_level", ""),
+                sent.get("label", ""),
+                signal.get("composite_signal", ""),
+            ] if s and s != "N/A"
+        )
+        block = evidence_block(kw, doc_types=["news", "narrative", "region", "report"])
+    except Exception:
+        block = ""
+    if block:
+        lines += ["", block]
+
     return "\n".join(lines)
 
 

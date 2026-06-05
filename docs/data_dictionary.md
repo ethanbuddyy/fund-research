@@ -165,3 +165,42 @@ yfinance 指数 / VIX / 商品 / 板块 ETF 日线（长表）。
 - `mode`：`real` / `partial` / `mock`——决定报告/CLI 的可信度横幅；
   关键源任一为 `mock` 则整体视为不可用于决策。
 - `rows` / `detail`：本次采集行数与说明。
+
+---
+
+## `data_cache`
+
+内容哈希缓存索引（`utils/provenance.py` 的 `cache_get`/`cache_put`/`cached_fetch`）。
+
+- `cache_key`：`f"{source}:{source_id}"`（**主键**），如 `fund_fee:000934`。
+- `data_hash`：payload 内容指纹（sha256 前 16 hex）。**为空 = 元数据缺失 → 缓存自动失效**。
+  同时是原始快照文件名：`data/raw/<source>/<data_hash>.json`（内容寻址，不可变）。
+- `config_hash`：本次取数依赖的配置子集指纹。**与查询方传入的 config_hash 不一致 → 失效**
+  （配置/阈值/权重一改，旧缓存立即作废，保证结果可复现）。
+- `payload_kind`：`json`（默认）或 `dataframe`——决定快照如何反序列化。
+- `mode`：沿用 provenance 模式（real/partial/mock）。
+- `fetched_at`：落库 UTC 时间，配合 `cache_get(max_age_days=...)` 判断时效。
+
+> 缓存有效性 = `cache_key` 命中 **且** `config_hash` 匹配 **且** `data_hash` 非空 **且**
+> 未超 `max_age_days` **且** 快照文件存在；任一不满足即视为未命中、重新取数。
+
+---
+
+## `documents`
+
+检索语料表（`src/retrieval/`）。沉淀「用完即弃」文本（市场叙事 / 区域展望 / 单基金研判）、
+截留的新闻原文、历史报告分块，供 BM25 词法检索（`run.py --recall`）与 RAG 注入 AI prompt。
+
+- `doc_id`：`f"{doc_type}:{data_hash}"`（**主键**）。同 doc_type + 同正文 → 同 doc_id，
+  `INSERT OR IGNORE` 幂等去重，不重复入库。
+- `doc_type`：`news` / `narrative` / `region` / `fund_analysis` / `report`。
+- `source_id`：细分标识——基金代码 / 地区 / 日期 / 报告文件名。
+- `title`：标题（新闻头条、报告 H2 段标题、研判标题等）。
+- `text`：文档正文（纯文本，BM25 分词检索对象）。
+- `meta`：JSON，附带 url / date / lang / fund_name 等上下文。
+- `data_hash`：正文内容指纹（`provenance.compute_data_hash`，sha256 前 16 hex），doc_id 去重依据。
+- `mode`：沿用 provenance 模式（real/partial/mock）。
+- `created_at`：入库 UTC 时间。
+
+> 受 `settings.yaml: retrieval.enabled` 总开关控制；`retrieval.inject_into_ai` 单独门控
+> 是否把检索证据注入 AI 三阶段 prompt（关 → AI 链路与现状逐字一致）。

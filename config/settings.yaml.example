@@ -157,3 +157,15 @@ user_profile:
 risk_management:
   stop_loss_pct: 0.0               # 止损阈值（小数）：0.15 = 回撤超 15% 触发，0 = 禁用
   # 建议值：激进投资者 0.20，稳健 0.15，保守 0.10
+
+# ── 检索/语义检索层（src/retrieval/）────────────────────────
+# BM25 词法检索起步，零新依赖；沉淀「用完即弃」文本+新闻原文+历史报告为语料，
+# 供 --recall 语义搜索与 RAG 注入 AI 三阶段 prompt。
+retrieval:
+  enabled: true
+  backend: lexical          # lexical（当前）| embedding（未来，实现同 Retriever 协议即可热插拔）
+  top_k: 5                  # 检索返回条数
+  max_evidence_chars: 1200  # 注入 AI prompt 的证据块字符上限
+  inject_into_ai: true      # 关 → AI 链路与现状逐字一致（回归保护）
+  doc_types: [news, narrative, region, fund_analysis, report]
+  index_reports_dir: true   # 是否收编 reports/*.md 历史报告

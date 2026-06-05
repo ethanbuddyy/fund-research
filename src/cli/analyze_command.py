@@ -35,6 +35,13 @@ def run_analyze(query: str) -> None:
     except Exception as e:
         print(f"\n[警告] Markdown 报告生成失败：{e}")
 
+    # 研判结论 + 地区展望沉淀进检索库（fail-soft）
+    try:
+        from ..retrieval.ingest import ingest_fund_analysis
+        ingest_fund_analysis(result)
+    except Exception as e:
+        print(f"[检索] 研判语料沉淀跳过（不影响主流程）：{e}")
+
 
 def print_analysis(result: dict) -> None:
     """终端打印 8 模块研判摘要。"""

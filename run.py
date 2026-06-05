@@ -21,6 +21,10 @@ def main():
         help="搜索基金代码，如：--search 纳斯达克  或  --search 标普500",
     )
     parser.add_argument(
+        "--recall", metavar="QUERY",
+        help="语义检索已沉淀语料（叙事/新闻/研判/历史报告），如：--recall 美联储降息",
+    )
+    parser.add_argument(
         "--check-holdings", metavar="SOURCE", nargs="?", const="config/my_holdings.yaml",
         help=(
             "持仓健康诊断模式。"
@@ -33,6 +37,12 @@ def main():
     # ── 基金搜索模式 ─────────────────────────────────────────────
     if args.search:
         _run_search(args.search)
+        return
+
+    # ── 语义检索模式（独立分支，不触发采集）─────────────────────
+    if args.recall:
+        from src.cli.recall_command import run_recall
+        run_recall(args.recall)
         return
 
     # ── 单基金综合研判模式 ────────────────────────────────────────

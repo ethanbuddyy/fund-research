@@ -114,4 +114,13 @@ def run_update(logger=None) -> dict:
     portfolio = build_portfolio_recommendation(signal)
     _log(f"[5/5] 投资信号生成完成 → {signal.get('composite_signal', '—')}")
 
+    # ── 语料沉淀：把本次「用完即弃」叙事 + 历史报告收编进检索库（fail-soft）──
+    try:
+        from src.retrieval.ingest import ingest_run
+        added = ingest_run(signal, scores_df, portfolio)
+        if added:
+            _log(f"[检索] 语料沉淀完成，新增 {added} 条文档")
+    except Exception as e:
+        _log(f"[检索] 语料沉淀跳过（不影响主流程）: {e}")
+
     return signal, scores_df, portfolio

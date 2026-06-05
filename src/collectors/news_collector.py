@@ -21,6 +21,34 @@ from ..utils.database import read_table, upsert_dataframe
 from ..utils.config import load_config
 
 
+def _persist_news_corpus(items: list[dict], today: str) -> None:
+    """把新闻原文截留进检索语料库（聚合成情绪数值前调用）。
+
+    items: 已归一化为 {title, summary, url, source} 的文章列表。
+    fail-soft：检索层未启用/异常都不得影响情绪计算主流程。
+    """
+    try:
+        from ..retrieval.store import upsert_document
+    except Exception:
+        return
+    for it in items:
+        try:
+            title = (it.get("title") or "").strip()
+            summary = (it.get("summary") or "").strip()
+            text = f"{title}\n{summary}".strip()
+            if not text:
+                continue
+            upsert_document(
+                doc_type="news",
+                source_id=today,
+                title=title,
+                text=text,
+                meta={"url": it.get("url", ""), "date": today, "source": it.get("source", "")},
+            )
+        except Exception:
+            continue
+
+
 # ── 金融情绪关键词表（Finnhub 关键词打分用）────────────────────────
 
 _BULLISH_WORDS = re.compile(
@@ -120,6 +148,20 @@ def _fetch_alphavantage(api_key: str, today: str) -> dict | None:
         if not feed:
             print("[WARN] Alpha Vantage 返回空 feed")
             return None
+
+        # 截留原文进检索语料（聚合成数值前；fail-soft）
+        _persist_news_corpus(
+            [
+                {
+                    "title": a.get("title", ""),
+                    "summary": a.get("summary", ""),
+                    "url": a.get("url", ""),
+                    "source": a.get("source", "alphavantage"),
+                }
+                for a in feed
+            ],
+            today,
+        )
 
         # relevance_score 在 ticker_sentiment 子项中，文章层面不存在；
         # 已通过 topics 参数过滤，直接使用全部文章，等权平均。
@@ -226,6 +268,20 @@ def _fetch_finnhub(api_key: str, today: str) -> dict | None:
             return None
         if not articles:
             return None
+
+        # 截留原文进检索语料（聚合成数值前；fail-soft）
+        _persist_news_corpus(
+            [
+                {
+                    "title": a.get("headline", ""),
+                    "summary": a.get("summary", ""),
+                    "url": a.get("url", ""),
+                    "source": a.get("source", "finnhub"),
+                }
+                for a in articles
+            ],
+            today,
+        )
 
         result = _score_headlines(articles)
         _save_cache(today, "finnhub", result)

@@ -8,10 +8,10 @@ from .config import get_db_path
 # 一旦未来有人把用户输入当 table 传进来就会瞬间引入 SQL 注入。这里把边界钉死：
 # 只允许 schema 中实际存在的表，挡住任何意外/恶意的表名。
 _KNOWN_TABLES = frozenset({
-    "collection_meta", "fund_fees", "fund_holdings", "fund_list", "fund_manager",
-    "fund_nav_history", "fund_performance", "fund_scores", "fund_turnover",
-    "fund_year_returns", "global_macro", "macro_data", "market_data",
-    "market_signals", "news_sentiment", "valuation_data",
+    "collection_meta", "data_cache", "documents", "fund_fees", "fund_holdings",
+    "fund_list", "fund_manager", "fund_nav_history", "fund_performance", "fund_scores",
+    "fund_turnover", "fund_year_returns", "global_macro", "macro_data",
+    "market_data", "market_signals", "news_sentiment", "valuation_data",
 })
 
 
@@ -248,6 +248,38 @@ def init_database():
         source TEXT DEFAULT 'eastmoney',
         updated_at TEXT DEFAULT (datetime('now')),
         UNIQUE(fund_code, year)
+    );
+
+    -- 内容哈希缓存索引：见 src/utils/provenance.py。
+    -- 有效性 = 主键(cache_key) + data_hash + config_hash 全匹配；
+    -- 配置变(config_hash变)或元数据缺失(data_hash空)即自动失效。
+    -- 原始 payload 内容寻址存于 data/raw/<source>/<data_hash>.json（不可变）。
+    CREATE TABLE IF NOT EXISTS data_cache (
+        cache_key TEXT PRIMARY KEY,
+        source TEXT NOT NULL,
+        source_id TEXT,
+        data_hash TEXT,
+        config_hash TEXT,
+        payload_kind TEXT DEFAULT 'json',
+        mode TEXT,
+        rows INTEGER DEFAULT 0,
+        detail TEXT,
+        fetched_at TEXT DEFAULT (datetime('now'))
+    );
+
+    -- 检索语料表：见 src/retrieval/。沉淀「用完即弃」文本（叙事/区域/研判）+ 新闻原文
+    -- + 历史报告分块，供 BM25 词法检索（--recall）与 RAG 注入。
+    -- 内容寻址去重：doc_id = f"{doc_type}:{data_hash}"，同内容同 doc_id 不重复入库。
+    CREATE TABLE IF NOT EXISTS documents (
+        doc_id     TEXT PRIMARY KEY,       -- f"{doc_type}:{data_hash}"
+        doc_type   TEXT NOT NULL,          -- news/narrative/region/fund_analysis/report
+        source_id  TEXT,                   -- fund_code/region/date/报告文件名
+        title      TEXT,
+        text       TEXT NOT NULL,
+        meta       TEXT,                   -- JSON: url/date/lang 等
+        data_hash  TEXT,                   -- 内容指纹(去重)
+        mode       TEXT DEFAULT 'real',    -- 沿用 provenance 模式
+        created_at TEXT DEFAULT (datetime('now'))
     );
     """)
     conn.commit()

@@ -89,11 +89,29 @@ def _format_funds(portfolio: dict, market_signal: dict) -> str:
             f"费率{er_str}"
         )
 
+    # RAG：为单只基金检索相关证据（retrieval.inject_into_ai 门控；关闭则返回空、行不变）
+    def _fund_evidence(f: dict) -> str:
+        try:
+            from ..retrieval.recall import evidence_block
+            name = f.get("fund_name", "") or f.get("fund_code", "")
+            if not name:
+                return ""
+            return evidence_block(
+                name,
+                doc_types=["fund_analysis", "region", "news", "report"],
+                header="检索证据：",
+            )
+        except Exception:
+            return ""
+
     core_funds = portfolio.get("core_funds", [])
     if core_funds:
         lines.append("核心持仓：")
         for f in core_funds:
             lines.append("  " + fmt_fund(f, "核心"))
+            ev = _fund_evidence(f)
+            if ev:
+                lines.append("    " + ev.replace("\n", "\n    "))
         lines.append("")
 
     sat_funds = portfolio.get("satellite_funds", [])
@@ -101,6 +119,9 @@ def _format_funds(portfolio: dict, market_signal: dict) -> str:
         lines.append("卫星持仓：")
         for f in sat_funds:
             lines.append("  " + fmt_fund(f, "卫星"))
+            ev = _fund_evidence(f)
+            if ev:
+                lines.append("    " + ev.replace("\n", "\n    "))
         lines.append("")
 
     top = portfolio.get("top_picks", [])[:5]
