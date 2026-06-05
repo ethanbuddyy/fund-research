@@ -8,7 +8,7 @@
 [![Data](https://img.shields.io/badge/数据源-FRED%20%7C%20multpl%20%7C%20yfinance%20%7C%20天天基金-green)](#二数据接口)
 [![AI](https://img.shields.io/badge/AI%20增强-Claude%20Phase1%2FPhase2-orange?logo=anthropic)](https://anthropic.com)
 [![MCP](https://img.shields.io/badge/MCP-4%20服务器-purple)](#三mcp-决策分析扩展)
-[![Tests](https://img.shields.io/badge/Tests-5%20suites-brightgreen?logo=pytest)](#tests)
+[![Tests](https://img.shields.io/badge/Tests-205%20passing-brightgreen?logo=pytest)](#tests)
 [![Report](https://img.shields.io/badge/报告-Markdown%20%2B%20HTML-informational)](#4-投研报告10-章节)
 
 > ⚠️ **免责声明**：本系统仅供研究与学习，所有输出不构成投资建议。投资有风险，决策需自负。
@@ -432,8 +432,11 @@ fund-research/
 ├── src/
 │   ├── application/
 │   │   └── update_pipeline.py     # 统一更新编排（run / scheduler 共用）
-│   ├── domain/
-│   │   └── scoring.py             # 评分纯函数（生产与回测共用同一实现）
+│   ├── domain/                     # 领域纯函数 / 类型契约（单一事实来源）
+│   │   ├── scoring.py             # 评分纯函数（生产与回测共用同一实现）
+│   │   ├── factor_config.py       # 因子权重 / 区域权重（生产与回测共用）
+│   │   ├── labels.py              # 报告阈值→标签判定（MD/HTML 渲染器共用）
+│   │   └── types.py               # MarketSignal / PortfolioRecommendation 类型契约
 │   ├── analysis/                   # 单基金深度研判模块（--analyze 入口）
 │   │   ├── fund_deep_analysis.py  # 基金深度研判主逻辑
 │   │   ├── fund_lookup.py         # 基金代码/名称查找
@@ -475,10 +478,17 @@ fund-research/
 │       ├── config.py / database.py / provenance.py
 │       ├── portfolio_tracker.py   # 持仓追踪 + 回撤止损
 │       └── fund_universe.py       # 基金标的库 + 分类 / 去重规则
-├── tests/                          # 单元测试套件
+├── tests/                          # 单元 + 集成测试套件（pytest，205 用例）
+│   ├── test_pipeline_integration.py  # 主链路集成：评分→组合→回测（真实调用）
 │   ├── test_backtester_basics.py  # 回测引擎基础校验
-│   ├── test_dataframe_guards.py   # DataFrame 防护（NaN / 空值）
+│   ├── test_dataframe_guards.py   # 采集层防护（直接调生产函数，非副本）
 │   ├── test_domain_scoring.py     # 评分纯函数正确性
+│   ├── test_domain_labels.py      # 报告阈值→标签判定
+│   ├── test_fund_deep_analysis.py # 单基金研判 + 一票否决
+│   ├── test_ai_phase2.py          # AI Phase2 输出归一化健壮性
+│   ├── test_eastmoney_parsers.py  # 天天基金非官方接口解析
+│   ├── test_report_builder.py     # 报告生成器辅助函数
+│   ├── test_html_report.py        # HTML 报告转义（XSS 防护回归）
 │   ├── test_holdings_checker.py   # 持仓诊断逻辑
 │   └── test_macro_fallback.py     # 宏观数据降级回退
 ├── tools/
@@ -490,7 +500,7 @@ fund-research/
 
 **SQLite 数据库表**（`data/fund_research.db`）：
 
-`macro_data` · `global_macro` · `market_data` · `valuation_data` · `fund_list` · `fund_nav_history` · `fund_holdings` · `fund_performance` · `fund_scores` · `market_signals` · `collection_meta`
+`macro_data` · `global_macro` · `market_data` · `valuation_data` · `fund_list` · `fund_nav_history` · `fund_holdings` · `fund_performance` · `fund_scores` · `fund_manager` · `fund_turnover` · `fund_fees` · `fund_year_returns` · `news_sentiment` · `market_signals` · `collection_meta`
 
 ---
 
@@ -574,9 +584,16 @@ fund-research/
 <details>
 <summary><b>测试套件</b></summary>
 
+- ✅ `test_pipeline_integration` — 主链路集成：`score_all_funds` → `build_portfolio_recommendation` → `run_backtest` 真实调用（含仓位口径一致性回归）
 - ✅ `test_backtester_basics` — 回测引擎无前视偏差、基准收益正确性
-- ✅ `test_dataframe_guards` — 采集层 DataFrame 空值 / NaN 防御
+- ✅ `test_dataframe_guards` — 采集层空值 / NaN 防御（**直接调用生产函数并打桩 I/O，非测试内副本**）
 - ✅ `test_domain_scoring` — 评分纯函数（类别分位、加权合成、边界条件）
+- ✅ `test_domain_labels` — 报告阈值→标签判定（VIX / 信用 / 趋势业务口径）
+- ✅ `test_fund_deep_analysis` — 单基金 7 维评分辅助函数 + 一票否决（含卡玛比率格式化崩溃回归）
+- ✅ `test_ai_phase2` — AI Phase2 LLM 输出归一化（畸形 JSON 结构容错）
+- ✅ `test_eastmoney_parsers` — 天天基金 `pingzhongdata` 非官方接口解析容错
+- ✅ `test_report_builder` — 报告生成器提取出的模块级辅助函数
+- ✅ `test_html_report` — HTML 报告外部/AI 文本转义（存储型 XSS 防护回归）
 - ✅ `test_holdings_checker` — 持仓诊断逻辑（集中度预警、费率计算、健康评级）
 - ✅ `test_macro_fallback` — 宏观数据三级降级回退链路
 
