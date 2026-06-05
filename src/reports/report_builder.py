@@ -18,14 +18,20 @@ from typing import Optional
 
 import pandas as pd
 
+from ..domain.labels import (
+    vix_elevated, vix_neutral, credit_tight, credit_loose, trend_label,
+    trend_strong, TREND_STRONG,
+)
+from ..domain.types import MarketSignal, PortfolioRecommendation
+
 
 # ─────────────────────────────────────────────────────────────
 # 对外主入口
 # ─────────────────────────────────────────────────────────────
 
 def build_report(
-    signal: dict,
-    portfolio: dict,
+    signal: MarketSignal,
+    portfolio: PortfolioRecommendation,
     scores_df: Optional[pd.DataFrame] = None,
     backtest: Optional[dict] = None,
     output_dir: str | Path = "reports",
@@ -149,11 +155,11 @@ def _key_conclusions(signal: dict, portfolio: dict) -> list[str]:
     trend_score = trend or 5
     if val_score is not None and trend_score is not None:
         val_label = "高估" if float(val_score) < 5 else "合理"
-        trend_label = "强趋势" if float(trend_score) >= 6.5 else "弱趋势" if float(trend_score) <= 3.5 else "中性趋势"
+        trend_lbl = trend_label(trend_score)
         cape_str = f"CAPE {_num(cape, '.1f')}" if cape else val_level
         conclusions.append(
             f"估值偏{val_label}（{cape_str}，估值分 {_score(val_score)}/10）与"
-            f"{trend_label}（趋势分 {_score(trend_score)}/10）并存——"
+            f"{trend_lbl}（趋势分 {_score(trend_score)}/10）并存——"
             f"综合评分 {_num(raw, '.2f')}/10，触发「{composite}」信号。"
         )
 
@@ -164,8 +170,8 @@ def _key_conclusions(signal: dict, portfolio: dict) -> list[str]:
     conclusions.append(
         f"宏观周期「{macro_cycle}」，利率{fed_label}（方向修正 {_num(fed_dir, '+.1f')} 分）；"
         f"{credit_str}，"
-        + ("流动性环境宽松。" if credit and float(credit) >= 6 else
-           "信用环境偏紧，需关注风险溢价上升。" if credit and float(credit) <= 3.5 else
+        + ("流动性环境宽松。" if credit_loose(credit) else
+           "信用环境偏紧，需关注风险溢价上升。" if credit_tight(credit) else
            "信用环境中性。")
     )
 
@@ -178,8 +184,8 @@ def _key_conclusions(signal: dict, portfolio: dict) -> list[str]:
     vix_str = f"VIX {_num(vix, '.1f')}" if vix else ""
     conclusions.append(
         f"建议持仓：核心 {core_pct:.0f}%（{n_core} 只宽基）+ 卫星 {sat_pct:.0f}%（{n_sat} 只行业/主动）+ 现金 {cash_pct:.0f}%。"
-        + (f"情绪面 {vix_str} 处于中性区间，当前仓位合理。" if vix and 15 <= float(vix) <= 25 else
-           f"{vix_str} 偏高，卫星仓位已相应收缩。" if vix and float(vix) > 25 else "")
+        + (f"情绪面 {vix_str} 处于中性区间，当前仓位合理。" if vix_neutral(vix) else
+           f"{vix_str} 偏高，卫星仓位已相应收缩。" if vix_elevated(vix) else "")
     )
 
     return conclusions[:3]
@@ -301,12 +307,12 @@ def _s3_market_theme(signal: dict) -> str:
     else:
         # 规则层推断主矛盾
         val_high = float(val_score or 5) < 5
-        trend_strong = float(trend_score or 5) >= 6.5
-        if val_high and trend_strong:
+        is_trend_strong = trend_strong(trend_score if trend_score is not None else 5)
+        if val_high and is_trend_strong:
             contradiction = f"高估值（CAPE {_num(signal.get('cape'), '.1f')}，估值分 {_score(val_score)}/10）vs 强趋势（趋势分 {_score(trend_score)}/10）——动量暂时压过估值压力"
         elif val_high:
             contradiction = f"高估值压力（CAPE {_num(signal.get('cape'), '.1f')}，估值分 {_score(val_score)}/10）与偏弱的趋势信号并存——谨慎防御"
-        elif trend_strong:
+        elif is_trend_strong:
             contradiction = f"估值合理（估值分 {_score(val_score)}/10）+ 强趋势（趋势分 {_score(trend_score)}/10）——进攻型信号"
         else:
             contradiction = f"估值与趋势均处中性（估值分 {_score(val_score)}/10，趋势分 {_score(trend_score)}/10）——标配均衡"
@@ -590,9 +596,9 @@ def _s7_exposure_risk(portfolio: dict, signal: dict) -> str:
         "**申赎成本**：开放式 QDII 申购费 0.6–1.5%，赎回费 0.5%，频繁操作显著侵蚀收益",
         "**流动性风险**：规模较小的 QDII 日均成交量低，大额买卖可能影响价格",
     ]
-    if vix and float(vix) > 25:
+    if vix_elevated(vix):
         qdii_risks.insert(0, f"**⚠️ 当前 VIX {_num(vix, '.1f')} 偏高**：市场波动加剧，场内 ETF 溢价可能快速扩大，操作需谨慎")
-    if credit_score and float(credit_score) <= 3.5:
+    if credit_tight(credit_score):
         qdii_risks.insert(0, "**⚠️ 信用利差偏高**：全球信用环境趋紧，高收益债 QDII 需特别警惕流动性冲击")
 
     region_table = "\n".join(["| 区域 | 基金 |", "|---|---|"] + region_rows) if region_rows else "_无持仓数据_"
@@ -651,8 +657,8 @@ def _s8_action_plan(signal: dict, portfolio: dict) -> str:
 
         # 额外规则层动作
         if composite == "重仓进取":
-            if float(trend_score) >= 6.5:
-                plan_items.append(f"趋势分持续 ≥ 6.5 且 VIX 保持 < 20，可将核心仓位上限从 {core_pct:.0f}% 提至 {min(80, core_pct+10):.0f}%")
+            if trend_strong(trend_score):
+                plan_items.append(f"趋势分持续 ≥ {TREND_STRONG:g} 且 VIX 保持 < 20，可将核心仓位上限从 {core_pct:.0f}% 提至 {min(80, core_pct+10):.0f}%")
         elif composite in ("谨慎防守", "减仓防守"):
             plan_items.append(f"若 SP500 连续 3 个月回撤超过 10%，考虑分批补仓核心指数 ETF（等权买持）")
 
@@ -993,13 +999,54 @@ def _load_fund_extra(fund_code: str) -> dict:
     return extra
 
 
-def _fund_report_content(result: dict, date_str: str) -> str:
-    _GRADE_LABEL = {
-        "优质候选": "🟢 优质候选", "合格候选": "🔵 合格候选",
-        "有明显短板": "🟡 有明显短板", "不建议配置": "🟠 不建议配置", "剔除": "🔴 剔除",
-    }
-    _COV = {"COMPUTED": "✅", "PROXY": "~", "UNAVAILABLE": "⚠️"}
+# 子项数据覆盖度图标（COMPUTED=实算 / PROXY=代理 / UNAVAILABLE=缺失）
+_COV = {"COMPUTED": "✅", "PROXY": "~", "UNAVAILABLE": "⚠️"}
 
+_GRADE_LABEL = {
+    "优质候选": "🟢 优质候选", "合格候选": "🔵 合格候选",
+    "有明显短板": "🟡 有明显短板", "不建议配置": "🟠 不建议配置", "剔除": "🔴 剔除",
+}
+
+
+def _fmt_num(v, d: int = 2) -> str:
+    """NaN 安全的定点格式化：None/NaN → 「—」，否则保留 d 位小数。"""
+    if v is None or (isinstance(v, float) and v != v):
+        return "—"
+    return f"{v:.{d}f}"
+
+
+def _dimension_detail_table(scores: dict, key: str) -> str:
+    """单个评分维度的子项明细表（从 _fund_report_content 提取为模块级，便于阅读/测试）。"""
+    s = scores.get(key, {})
+    rows = ["| 子项 | 得分 | 满分 | 覆盖 | 备注 |", "|---|---:|---:|---|---|"]
+    for sub, d in (s.get("details") or {}).items():
+        sc  = d.get("score", "—")
+        mx  = d.get("max", "—")
+        cov = _COV.get(d.get("coverage", "?"), "?")
+        note_parts = []
+        for k, v in d.items():
+            if k in ("score", "max", "coverage", "note"):
+                continue
+            note_parts.append(f"{k}={_fmt_num(v) if isinstance(v, float) else v}")
+        note = d.get("note") or ("; ".join(note_parts[:3]))
+        rows.append(f"| {sub} | {sc:.1f} | {mx} | {cov} | {note[:60]} |")
+    return "\n".join(rows)
+
+
+def _fee_table(fee_rows: list, title: str) -> str:
+    """申购/赎回费率表（从 _fund_report_content 提取为模块级）。"""
+    if not fee_rows:
+        return f"**{title}**：暂无数据\n"
+    lines = [f"**{title}**", "", "| 条件 | 费率 |", "|---|---:|"]
+    for r in fee_rows:
+        desc = r.get("rate_desc") or "—"
+        rate = r.get("rate")
+        rate_str = f"{rate*100:.2f}%" if rate is not None else "—"
+        lines.append(f"| {desc} | {rate_str} |")
+    return "\n".join(lines)
+
+
+def _fund_report_content(result: dict, date_str: str) -> str:
     info   = result["fund_info"]
     perf   = result["performance"]
     adv    = result["advanced_metrics"]
@@ -1015,7 +1062,7 @@ def _fund_report_content(result: dict, date_str: str) -> str:
     total   = scores["total"]
     sig_fit = concl.get("fit_signal") or {}
 
-    _f = lambda v, d=2: f"{v:.{d}f}" if v is not None and not (isinstance(v, float) and v != v) else "—"
+    _f = _fmt_num
 
     # ── 评分表 ─────────────────────────────────────────────────
     dim_names = [
@@ -1037,22 +1084,9 @@ def _fund_report_content(result: dict, date_str: str) -> str:
     score_rows.append(f"| **合计** | **{total:.1f}** | **100** | |")
     score_table = "\n".join(score_rows)
 
-    # ── 详细子项表 ─────────────────────────────────────────────
+    # 详细子项表：_dimension_detail_table(scores, key)（已提为模块级）
     def _detail_table(key: str) -> str:
-        s = scores.get(key, {})
-        rows = ["| 子项 | 得分 | 满分 | 覆盖 | 备注 |", "|---|---:|---:|---|---|"]
-        for sub, d in (s.get("details") or {}).items():
-            sc  = d.get("score", "—")
-            mx  = d.get("max", "—")
-            cov = _COV.get(d.get("coverage", "?"), "?")
-            note_parts = []
-            for k, v in d.items():
-                if k in ("score", "max", "coverage", "note"):
-                    continue
-                note_parts.append(f"{k}={_f(v) if isinstance(v, float) else v}")
-            note = d.get("note") or ("; ".join(note_parts[:3]))
-            rows.append(f"| {sub} | {sc:.1f} | {mx} | {cov} | {note[:60]} |")
-        return "\n".join(rows)
+        return _dimension_detail_table(scores, key)
 
     # ── 同类对比表 ─────────────────────────────────────────────
     peer_rows = ["| 指标 | 本基金 | 同类中位数 | 同类均值 |", "|---|---:|---:|---:|"]
@@ -1186,18 +1220,7 @@ def _fund_report_content(result: dict, date_str: str) -> str:
     else:
         manager_section = "\n### 基金经理\n\n_暂无详细经理数据（需更新数据）_"
 
-    # ── 申购/赎回费率 ─────────────────────────────────────────────
-    def _fee_table(fee_rows: list, title: str) -> str:
-        if not fee_rows:
-            return f"**{title}**：暂无数据\n"
-        lines = [f"**{title}**", "", "| 条件 | 费率 |", "|---|---:|"]
-        for r in fee_rows:
-            desc = r.get("rate_desc") or "—"
-            rate = r.get("rate")
-            rate_str = f"{rate*100:.2f}%" if rate is not None else "—"
-            lines.append(f"| {desc} | {rate_str} |")
-        return "\n".join(lines)
-
+    # ── 申购/赎回费率（_fee_table 已提为模块级）─────────────────────
     purchase_section  = _fee_table(extra.get("purchase_fees") or [],  "申购费率")
     redemption_section = _fee_table(extra.get("redemption_fees") or [], "赎回费率")
 

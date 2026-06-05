@@ -278,12 +278,14 @@ def _enrich_aum(candidates: list) -> list:
         if not codes:
             return candidates
         conn = get_connection()
-        placeholders = ",".join("?" * len(codes))
-        rows = conn.execute(
-            f"SELECT fund_code, total_assets FROM fund_list WHERE fund_code IN ({placeholders})",
-            codes,
-        ).fetchall()
-        conn.close()
+        try:
+            placeholders = ",".join("?" * len(codes))
+            rows = conn.execute(
+                f"SELECT fund_code, total_assets FROM fund_list WHERE fund_code IN ({placeholders})",
+                codes,
+            ).fetchall()
+        finally:
+            conn.close()  # 异常路径也要关连接
         aum_map = {r[0]: r[1] for r in rows if r[1] is not None}
         if not aum_map:
             return candidates

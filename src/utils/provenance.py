@@ -20,16 +20,18 @@ def record(source: str, mode: str, rows: int = 0, detail: str = "") -> None:
     """记录某数据源本次采集的模式。source 如 macro/market/fund/valuation。"""
     try:
         conn = get_connection()
-        conn.execute(
-            """INSERT INTO collection_meta (source, mode, rows, detail, updated_at)
-               VALUES (?, ?, ?, ?, datetime('now'))
-               ON CONFLICT(source) DO UPDATE SET
-                 mode=excluded.mode, rows=excluded.rows,
-                 detail=excluded.detail, updated_at=excluded.updated_at""",
-            (source, mode, int(rows), detail),
-        )
-        conn.commit()
-        conn.close()
+        try:
+            conn.execute(
+                """INSERT INTO collection_meta (source, mode, rows, detail, updated_at)
+                   VALUES (?, ?, ?, ?, datetime('now'))
+                   ON CONFLICT(source) DO UPDATE SET
+                     mode=excluded.mode, rows=excluded.rows,
+                     detail=excluded.detail, updated_at=excluded.updated_at""",
+                (source, mode, int(rows), detail),
+            )
+            conn.commit()
+        finally:
+            conn.close()  # 异常路径也要关连接，避免句柄泄漏
     except Exception:
         pass  # provenance 记录失败不应影响主流程
 
@@ -38,12 +40,13 @@ def read_all() -> dict:
     """返回 {source: {mode, rows, detail, updated_at}}。"""
     try:
         conn = get_connection()
-        cur = conn.execute("SELECT source, mode, rows, detail, updated_at FROM collection_meta")
-        out = {r["source"]: {"mode": r["mode"], "rows": r["rows"],
-                             "detail": r["detail"], "updated_at": r["updated_at"]}
-               for r in cur.fetchall()}
-        conn.close()
-        return out
+        try:
+            cur = conn.execute("SELECT source, mode, rows, detail, updated_at FROM collection_meta")
+            return {r["source"]: {"mode": r["mode"], "rows": r["rows"],
+                                  "detail": r["detail"], "updated_at": r["updated_at"]}
+                    for r in cur.fetchall()}
+        finally:
+            conn.close()  # 异常路径也要关连接，避免句柄泄漏
     except Exception:
         return {}
 

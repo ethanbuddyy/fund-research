@@ -3,6 +3,25 @@ import pandas as pd
 from pathlib import Path
 from .config import get_db_path
 
+# 已知表白名单：read_table/upsert_dataframe 把 table 名以 f-string 拼进 SQL（无法参数化），
+# 当前所有调用点都传内部常量、不存在注入面；但表名是字符串入参而非白名单，
+# 一旦未来有人把用户输入当 table 传进来就会瞬间引入 SQL 注入。这里把边界钉死：
+# 只允许 schema 中实际存在的表，挡住任何意外/恶意的表名。
+_KNOWN_TABLES = frozenset({
+    "collection_meta", "fund_fees", "fund_holdings", "fund_list", "fund_manager",
+    "fund_nav_history", "fund_performance", "fund_scores", "fund_turnover",
+    "fund_year_returns", "global_macro", "macro_data", "market_data",
+    "market_signals", "news_sentiment", "valuation_data",
+})
+
+
+def _check_table(table: str) -> None:
+    if table not in _KNOWN_TABLES:
+        raise ValueError(
+            f"未知数据表名 {table!r}（不在白名单内）。"
+            "表名以字符串拼入 SQL，仅允许 schema 中已定义的表，禁止传入动态/外部值。"
+        )
+
 
 def get_connection() -> sqlite3.Connection:
     db_path = get_db_path()
@@ -238,6 +257,7 @@ def init_database():
 def upsert_dataframe(df: pd.DataFrame, table: str, unique_cols: list[str]):
     if df.empty:
         return
+    _check_table(table)
     conn = get_connection()
     try:
         cols = df.columns.tolist()
@@ -255,6 +275,7 @@ def upsert_dataframe(df: pd.DataFrame, table: str, unique_cols: list[str]):
 
 
 def read_table(table: str, where: str = "", params: tuple = ()) -> pd.DataFrame:
+    _check_table(table)
     conn = get_connection()
     try:
         query = f"SELECT * FROM {table}"

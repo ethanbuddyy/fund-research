@@ -24,6 +24,7 @@ from ..utils.fund_universe import (
     REGION_BY_CODE,
 )
 from ..domain.scoring import consistency_score
+from ..domain.types import MarketSignal
 
 RF_ANNUAL = 0.02          # 无风险利率假设
 TRADING_DAYS = 252
@@ -33,7 +34,7 @@ TRADING_DAYS = 252
 # 主入口
 # ─────────────────────────────────────────────────────────────
 
-def analyze_fund(fund_code: str, market_signal: dict | None = None) -> dict:
+def analyze_fund(fund_code: str, market_signal: Optional[MarketSignal] = None) -> dict:
     """7 维 100 分制单基金综合研判。
 
     Args:
@@ -813,10 +814,11 @@ def _check_vetoes(
         if peer_dd < 0 and abs(max_dd) > abs(peer_dd) * 1.4:
             calmar = adv.get("calmar_ratio")
             if calmar is None or calmar < 0.5:
+                calmar_str = f"{calmar:.2f}" if calmar is not None else "不可计算"
                 vetoes.append({
                     "id": 3,
                     "condition": "最大回撤显著高于同类但无充分收益补偿",
-                    "detail": f"最大回撤 {max_dd:.1f}%，同类均值 {peer_dd:.1f}%，卡玛比率仅 {calmar:.2f if calmar else '不可计算'}",
+                    "detail": f"最大回撤 {max_dd:.1f}%，同类均值 {peer_dd:.1f}%，卡玛比率仅 {calmar_str}",
                     "severity": "hard",
                 })
 

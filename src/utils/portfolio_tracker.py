@@ -104,17 +104,19 @@ def _query_period_returns(all_funds: dict) -> dict[str, float]:
     try:
         from .database import get_connection
         conn = get_connection()
-        returns = {}
-        for code, info in all_funds.items():
-            prev_nav = info["prev_nav"]
-            row = conn.execute(
-                "SELECT nav FROM fund_nav_history WHERE fund_code=? ORDER BY date DESC LIMIT 1",
-                (code,),
-            ).fetchone()
-            if row and row[0] is not None and float(row[0]) > 0 and prev_nav > 0:
-                returns[code] = float(row[0]) / prev_nav - 1.0
-        conn.close()
-        return returns
+        try:
+            returns = {}
+            for code, info in all_funds.items():
+                prev_nav = info["prev_nav"]
+                row = conn.execute(
+                    "SELECT nav FROM fund_nav_history WHERE fund_code=? ORDER BY date DESC LIMIT 1",
+                    (code,),
+                ).fetchone()
+                if row and row[0] is not None and float(row[0]) > 0 and prev_nav > 0:
+                    returns[code] = float(row[0]) / prev_nav - 1.0
+            return returns
+        finally:
+            conn.close()  # 异常路径也要关连接
     except Exception:
         return {}
 

@@ -13,13 +13,16 @@ from typing import Optional
 
 import pandas as pd
 
+from ..domain.labels import vix_elevated, credit_tight
+from ..domain.types import MarketSignal, PortfolioRecommendation
+
 # ─────────────────────────────────────────────────────────────
 # 公共入口
 # ─────────────────────────────────────────────────────────────
 
 def build_html_report(
-    signal: dict,
-    portfolio: dict,
+    signal: MarketSignal,
+    portfolio: PortfolioRecommendation,
     scores_df: Optional[pd.DataFrame] = None,
     backtest: Optional[dict] = None,
     output_dir: str | Path = "reports",
@@ -705,9 +708,9 @@ def _section_risk(portfolio: dict, signal: dict) -> str:
         ("限购风险", "部分 QDII 在额度紧张时暂停大额申购，操作前确认可购状态", "blue"),
         ("申赎成本", "开放式 QDII 申购费 0.6–1.5%，频繁操作显著侵蚀收益", "blue"),
     ]
-    if float(vix) > 25:
+    if vix_elevated(vix):
         risks.insert(0, (f"VIX {_f(vix,1)} 偏高", "市场波动加剧，场内溢价可能快速扩大，谨慎操作", "red"))
-    if float(credit) <= 3.5:
+    if credit_tight(credit):
         risks.insert(0, ("信用利差偏高", "全球信用环境趋紧，高收益债 QDII 需警惕流动性冲击", "red"))
 
     risk_items = "".join(f"""

@@ -113,15 +113,17 @@ def _get_latest_navs(fund_codes: list) -> dict:
     try:
         from ..utils.database import get_connection
         conn = get_connection()
-        nav_map = {}
-        for code in fund_codes:
-            row = conn.execute(
-                "SELECT nav FROM fund_nav_history WHERE fund_code=? ORDER BY date DESC LIMIT 1",
-                (code,),
-            ).fetchone()
-            if row and row[0] is not None:
-                nav_map[code] = float(row[0])
-        conn.close()
+        try:
+            nav_map = {}
+            for code in fund_codes:
+                row = conn.execute(
+                    "SELECT nav FROM fund_nav_history WHERE fund_code=? ORDER BY date DESC LIMIT 1",
+                    (code,),
+                ).fetchone()
+                if row and row[0] is not None:
+                    nav_map[code] = float(row[0])
+        finally:
+            conn.close()  # 异常路径也要关连接
         return nav_map
     except Exception:
         return {}
