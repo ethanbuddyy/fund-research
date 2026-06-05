@@ -50,30 +50,47 @@ def fetch_on_demand(fund_code: str) -> bool:
     return recompute_performance(fund_code)
 
 
+def _fetch_expense_ratio(fund_code: str) -> dict | None:
+    """打天天基金 F10 页，解析 {mgmt, cust, sale}（百分数）。失败返回 None。"""
+    url = f"https://fundf10.eastmoney.com/jjfl_{fund_code}.html"
+    headers = {"Referer": "https://fundf10.eastmoney.com/",
+               "User-Agent": "Mozilla/5.0"}
+    r = requests.get(url, headers=headers, timeout=8)
+    if r.status_code != 200:
+        return None
+    mgmt = re.search(r'管理费率</td><td[^>]*>([\d.]+)%', r.text)
+    cust = re.search(r'托管费率</td><td[^>]*>([\d.]+)%', r.text)
+    sale = re.search(r'销售服务费率</td><td[^>]*>([\d.]+)%', r.text)
+    if not (mgmt and cust):
+        return None
+    return {"mgmt": float(mgmt.group(1)), "cust": float(cust.group(1)),
+            "sale": float(sale.group(1)) if sale else 0.0}
+
+
 def refresh_expense_ratio(fund_code: str) -> None:
-    """从天天基金 F10 页实时拉取管理费+托管费，更新 fund_list。"""
+    """拉取管理费+托管费，更新 fund_list。
+
+    费率极少变动 → 经内容哈希缓存（默认 30 天）避免每次 --analyze 都打天天基金；
+    命中缓存则跳过网络，仍幂等回写 fund_list（保证字段始终在位）。
+    """
+    from ..utils import provenance
     try:
-        url = f"https://fundf10.eastmoney.com/jjfl_{fund_code}.html"
-        headers = {"Referer": "https://fundf10.eastmoney.com/",
-                   "User-Agent": "Mozilla/5.0"}
-        r = requests.get(url, headers=headers, timeout=8)
-        if r.status_code != 200:
+        res = provenance.cached_fetch(
+            "fund_fee", lambda: _fetch_expense_ratio(fund_code),
+            source_id=fund_code, max_age_days=30,
+            detail=f"F10 费率 {fund_code}",
+        )
+        fee = res.payload
+        if not fee:
             return
-
-        mgmt = re.search(r'管理费率</td><td[^>]*>([\d.]+)%', r.text)
-        cust = re.search(r'托管费率</td><td[^>]*>([\d.]+)%', r.text)
-        sale = re.search(r'销售服务费率</td><td[^>]*>([\d.]+)%', r.text)
-
-        if mgmt and cust:
-            total = float(mgmt.group(1)) + float(cust.group(1))
-            if sale:
-                total += float(sale.group(1))
-            upsert_dataframe(pd.DataFrame([{
-                "fund_code":     fund_code,
-                "expense_ratio": round(total / 100, 6),
-                "updated_at":    datetime.now().strftime("%Y-%m-%d"),
-            }]), "fund_list", ["fund_code"])
-            print(f"  [费率] {fund_code} 管理{mgmt.group(1)}%+托管{cust.group(1)}% = {total:.2f}% (已更新)")
+        total = fee["mgmt"] + fee["cust"] + fee.get("sale", 0.0)
+        upsert_dataframe(pd.DataFrame([{
+            "fund_code":     fund_code,
+            "expense_ratio": round(total / 100, 6),
+            "updated_at":    datetime.now().strftime("%Y-%m-%d"),
+        }]), "fund_list", ["fund_code"])
+        tag = "缓存命中" if res.from_cache else "实时更新"
+        print(f"  [费率·{tag}] {fund_code} 管理{fee['mgmt']}%+托管{fee['cust']}% = {total:.2f}%")
     except Exception:
         pass  # 费率更新失败不阻断主流程
 
