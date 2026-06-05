@@ -486,10 +486,24 @@ def _section_data_quality(prov_data: dict, overall_mode: str) -> str:
         <div class="dq-rows">{rows:,}</div>
         <div class="dq-date">{updated}</div>
       </div>""")
+    # 检索增强层状态（提醒用户该可选板块的开关与语料量；fail-soft）
+    retrieval_note = ""
+    try:
+        from ..retrieval.recall import status, status_line
+        st = status()
+        color = "var(--green)" if st["enabled"] else "var(--muted, #888)"
+        retrieval_note = (
+            f'<div style="margin-top:10px;font-size:13px;color:{color};">'
+            f'🔎 {_e(status_line())}</div>'
+        )
+    except Exception:
+        retrieval_note = ""
+
     return f"""
 <div class="section">
   <div class="section-title">数据质量</div>
   <div class="dq-grid">{''.join(items)}</div>
+  {retrieval_note}
 </div>"""
 
 

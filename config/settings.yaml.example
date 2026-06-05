@@ -162,7 +162,7 @@ risk_management:
 # BM25 词法检索起步，零新依赖；沉淀「用完即弃」文本+新闻原文+历史报告为语料，
 # 供 --recall 语义搜索与 RAG 注入 AI 三阶段 prompt。
 retrieval:
-  enabled: true
+  enabled: true             # 【总开关】关闭则整层静默：不写语料/不检索/不注入；报告「数据可信度」板块会显示当前状态
   backend: lexical          # lexical（当前）| embedding（未来，实现同 Retriever 协议即可热插拔）
   top_k: 5                  # 检索返回条数
   max_evidence_chars: 1200  # 注入 AI prompt 的证据块字符上限

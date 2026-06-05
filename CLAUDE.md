@@ -61,7 +61,9 @@ phase1 嵌在 `recommender/signals.py`,phase2/phase3 在 `src/reports/`。
 **6. 检索层只读增强,不改数字** —— `src/retrieval/` 沉淀「用完即弃」文本(叙事/区域/研判)、
 截留新闻原文、收编历史报告进 `documents` 表(内容寻址去重,复用 `compute_data_hash`),
 供 BM25 词法检索。受 `settings.yaml: retrieval.enabled` 总开关 + `inject_into_ai` 注入闸门控制:
-**关闭注入则 AI 三阶段 prompt 与现状逐字一致**(回归保护)。检索仅做证据增强,不进量化计算、
+**关闭注入则 AI 三阶段 prompt 与现状逐字一致**(回归保护)。总开关是**单一真相源**
+(`retrieval.recall.is_enabled()`,所有入口含新闻截留均据此短路);报告「数据可信度」板块
+显示该层当前状态(`status_line()`:开关/RAG 注入/语料量),提醒用户这一可选板块的存在与状态。检索仅做证据增强,不进量化计算、
 不改信号/评分。后端经 `bm25.py: Retriever` 协议封装,日后加 embedding 后端实现同接口即可热插拔
 (`retrieval.backend` 切换)。ingestion 挂在唯一编排点 `update_pipeline.run_update()` 末尾(`ingest_run`)。
 〔代码强制:`documents` 表入 `_KNOWN_TABLES` 须同步 `docs/data_dictionary.md`,防漂移测试强制〕

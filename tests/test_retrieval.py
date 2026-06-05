@@ -175,3 +175,37 @@ class TestInjectionGate:
         )
         out_on = p1._format_signal_data(self._signal())
         assert "检索到的相关证据" in out_on
+
+
+# ── 总开关：单一真相源 + 漏点封堵 ─────────────────────────────
+class TestMasterSwitch:
+    def test_news_persist_respects_switch(self, tmp_db, monkeypatch):
+        """retrieval.enabled=false 时，新闻原文截留必须被总开关挡住（曾绕过总闸）。"""
+        import importlib
+        nc = importlib.import_module("src.collectors.news_collector")
+        items = [{"title": "美联储降息", "summary": "市场情绪回暖", "url": "u", "source": "av"}]
+
+        monkeypatch.setattr(recall_mod, "load_config",
+                            lambda: {"retrieval": {"enabled": False}})
+        nc._persist_news_corpus(items, "2026-06-05")
+        assert store_mod.count_documents() == 0  # 总开关关 → 一条都不写
+
+        monkeypatch.setattr(recall_mod, "load_config",
+                            lambda: {"retrieval": {"enabled": True}})
+        nc._persist_news_corpus(items, "2026-06-05")
+        assert store_mod.count_documents() == 1  # 开 → 正常截留
+
+    def test_status_line_reflects_state(self, tmp_db, monkeypatch):
+        store_mod.upsert_document("narrative", "d", "t", "美联储降息预期升温")
+
+        monkeypatch.setattr(recall_mod, "load_config",
+                            lambda: {"retrieval": {"enabled": False}})
+        assert "关闭" in recall_mod.status_line()
+        assert recall_mod.status()["enabled"] is False
+
+        monkeypatch.setattr(
+            recall_mod, "load_config",
+            lambda: {"retrieval": {"enabled": True, "inject_into_ai": True, "backend": "lexical"}},
+        )
+        line = recall_mod.status_line()
+        assert "开启" in line and "语料 1 篇" in line and "RAG 注入 AI：开" in line

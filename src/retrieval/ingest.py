@@ -25,8 +25,10 @@ _H2 = re.compile(r"^##\s+(.*)$", flags=re.MULTILINE)
 
 
 def _enabled() -> bool:
+    # 单一真相源：复用 recall.is_enabled（懒导入避免加载顺序耦合）
     try:
-        return bool(load_config().get("retrieval", {}).get("enabled", True))
+        from .recall import is_enabled
+        return is_enabled()
     except Exception:
         return False
 

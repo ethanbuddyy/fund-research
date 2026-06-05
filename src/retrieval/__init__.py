@@ -9,7 +9,7 @@ BM25 词法检索起步，零新依赖；`Retriever` 协议封装，日后可平
 
 from .bm25 import BM25Index, Hit, Retriever
 from .ingest import ingest_fund_analysis, ingest_reports_dir, ingest_run
-from .recall import recall
+from .recall import is_enabled, is_injection_enabled, recall
 from .store import iter_documents, upsert_document
 from .tokenize import tokenize
 
@@ -18,6 +18,8 @@ __all__ = [
     "Hit",
     "Retriever",
     "recall",
+    "is_enabled",
+    "is_injection_enabled",
     "upsert_document",
     "iter_documents",
     "tokenize",

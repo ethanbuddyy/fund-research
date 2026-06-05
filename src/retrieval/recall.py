@@ -20,6 +20,55 @@ def _retrieval_cfg() -> dict:
         return {}
 
 
+def is_enabled() -> bool:
+    """检索层总开关（settings.yaml: retrieval.enabled）——**单一真相源**。
+
+    关闭则整层静默：不写语料(ingest/新闻截留)、不检索(recall)、不注入(RAG)。
+    所有入口（store 写入除外，store 是被动原语）都应据此短路。
+    """
+    return bool(_retrieval_cfg().get("enabled", True))
+
+
+def is_injection_enabled() -> bool:
+    """RAG 注入子开关：须 总开关开 且 inject_into_ai 开，缺一不注入。"""
+    cfg = _retrieval_cfg()
+    return bool(cfg.get("enabled", True)) and bool(cfg.get("inject_into_ai", True))
+
+
+def status() -> dict:
+    """检索层运行状态——供报告「数据可信度」板块呈现，提醒用户该层开关与语料量。
+
+    返回 {enabled, injection, backend, doc_count}；关闭时 doc_count 不查库（置 0）。
+    """
+    cfg = _retrieval_cfg()
+    enabled = bool(cfg.get("enabled", True))
+    doc_count = 0
+    if enabled:
+        try:
+            from .store import count_documents
+            doc_count = count_documents()
+        except Exception:
+            doc_count = 0
+    return {
+        "enabled": enabled,
+        "injection": enabled and bool(cfg.get("inject_into_ai", True)),
+        "backend": cfg.get("backend", "lexical"),
+        "doc_count": doc_count,
+    }
+
+
+def status_line() -> str:
+    """单行中文状态串（MD/HTML/CLI 通用文本，不含标记）。"""
+    st = status()
+    if not st["enabled"]:
+        return "检索增强层：关闭（settings.yaml: retrieval.enabled=false）"
+    inject = "开" if st["injection"] else "关"
+    return (
+        f"检索增强层：开启（RAG 注入 AI：{inject} · 语料 {st['doc_count']} 篇 · "
+        f"后端 {st['backend']}）"
+    )
+
+
 def recall(
     query: str,
     k: Optional[int] = None,
@@ -52,9 +101,9 @@ def evidence_block(
     `retrieval.enabled=false` 或 `inject_into_ai=false` 或无命中 → 返回 ""，
     调用方据此保证「关闭注入时 prompt 与现状逐字一致」。截到 max_evidence_chars。
     """
-    cfg = _retrieval_cfg()
-    if not cfg.get("enabled", True) or not cfg.get("inject_into_ai", True):
+    if not is_injection_enabled():
         return ""
+    cfg = _retrieval_cfg()
     try:
         hits = recall(query, doc_types=doc_types)
     except Exception:

@@ -50,6 +50,18 @@ def upsert_document(
     return doc_id
 
 
+def count_documents() -> int:
+    """语料总条数（轻量 COUNT，供报告状态行用，不拉全表）。"""
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT COUNT(*) FROM documents").fetchone()
+        return int(row[0]) if row else 0
+    except Exception:
+        return 0
+    finally:
+        conn.close()
+
+
 def iter_documents(doc_types: Optional[Iterable[str]] = None) -> list[dict]:
     """读取语料。doc_types=None 取全部；否则按类型过滤。meta 解析回 dict。"""
     conn = get_connection()

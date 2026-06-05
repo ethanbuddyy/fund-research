@@ -610,6 +610,7 @@ fund-research/
 - ✅ **语料沉淀（三源）**：把「用完即弃」文本（市场叙事 / 区域展望 / 单基金研判）、新闻原文（采集时聚合成数值前截留）、历史报告（按 H2 分块）落 `documents` 表；按内容哈希去重（复用 `compute_data_hash`），幂等入库
 - ✅ **`--recall` 独立语义搜索**：在已沉淀语料上检索并按相关度排名输出，独立分支、不触发采集
 - ✅ **RAG 注入 AI 三阶段**：检索证据注入 Phase 1 市场分析 / Phase 2 组合建议 prompt；`retrieval.inject_into_ai` 门控，**关闭则 prompt 与现状逐字一致**（回归保护）
+- ✅ **单一总开关 + 状态可见**：`retrieval.enabled` 是唯一真相源，关闭则整层静默（不写/不检索/不注入，含新闻截留）；报告「数据可信度」板块显示该层开关/注入/语料量，避免可选板块「日久被遗忘」
 - ✅ **内容哈希缓存层**（`provenance.py`）：缓存按 主键 + `data_hash` + `config_hash` 失效（配置一变即作废）；原始 payload 内容寻址落 `data/raw/`（不可变快照，供复现/审计）；新增缓存点用 `cached_fetch`
 
 </details>

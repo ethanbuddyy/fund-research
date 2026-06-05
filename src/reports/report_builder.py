@@ -281,6 +281,13 @@ def _s2_data_quality(prov_data: dict, overall_mode: str, stale_warnings: list[st
     else:
         rows.append("\n✅ 所有数据源均在有效期内。")
 
+    # 检索增强层状态（提醒用户该可选板块的开关与语料量；fail-soft）
+    try:
+        from ..retrieval.recall import status_line
+        rows.append(f"\n> 🔎 {status_line()}")
+    except Exception:
+        pass
+
     return "\n".join(rows)
 
 

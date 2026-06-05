@@ -7,7 +7,12 @@ from __future__ import annotations
 
 
 def run_recall(query: str) -> None:
-    from ..retrieval.recall import recall
+    from ..retrieval.recall import recall, is_enabled
+
+    if not is_enabled():
+        print("[检索] 检索层已关闭（settings.yaml: retrieval.enabled = false）。")
+        print("  打开后重新运行 python3 run.py 积累语料，再 --recall 检索。")
+        return
 
     print(f"[检索] 查询：「{query}」")
     try:

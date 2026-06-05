@@ -28,6 +28,9 @@ def _persist_news_corpus(items: list[dict], today: str) -> None:
     fail-soft：检索层未启用/异常都不得影响情绪计算主流程。
     """
     try:
+        from ..retrieval.recall import is_enabled
+        if not is_enabled():          # 总开关关闭 → 不截留语料（堵住绕过总闸的漏点）
+            return
         from ..retrieval.store import upsert_document
     except Exception:
         return
