@@ -8,7 +8,7 @@
 [![Data](https://img.shields.io/badge/数据源-FRED%20%7C%20multpl%20%7C%20yfinance%20%7C%20天天基金-green)](#二数据接口)
 [![AI](https://img.shields.io/badge/AI%20增强-Phase1%2F2%2F3%20(含对抗审查)-orange?logo=anthropic)](https://anthropic.com)
 [![MCP](https://img.shields.io/badge/MCP-4%20服务器-purple)](#三mcp-决策分析扩展)
-[![Tests](https://img.shields.io/badge/Tests-225%20passing-brightgreen?logo=pytest)](#tests)
+[![Tests](https://img.shields.io/badge/Tests-257%20passing-brightgreen?logo=pytest)](#tests)
 [![Report](https://img.shields.io/badge/报告-Markdown%20%2B%20HTML-informational)](#4-投研报告10-章节)
 
 > ⚠️ **免责声明**：本系统仅供研究与学习，所有输出不构成投资建议。投资有风险，决策需自负。
@@ -76,6 +76,7 @@
 | 🛡️ **失败降级而非崩溃** | 任一数据源不可用自动回退并标记；不可降级的写操作失败时给出 `[WARN]` 诊断 |
 | 🔴 **对抗式审查防静默错误** | AI 投资决策由独立的「挑错」子智能体（Phase 3）复核，专抓与数据矛盾/无依据/过度自信/遗漏风险/自相矛盾，结论以独立板块呈现，防「看似合理实则错误」被无声采用（默认关闭，按需启用） |
 | 📖 **数据字典防口径漂移** | 表/字段语义集中文档化，尤其高危「字段复用」约定（如 `fund_manager.return_3y` 实存任期收益）；测试强制文档与 schema 白名单同步，改表不更文档即 CI 变红 |
+| 🔎 **语义检索 + RAG 增强** | 把「用完即弃」文本（市场叙事/区域展望/单基金研判）、新闻原文、历史报告沉淀为可检索语料（`documents` 表，内容寻址去重）；BM25 词法检索零新依赖，经 `Retriever` 协议封装可平滑升级 embedding；`--recall` 独立语义搜索 + 检索证据注入 AI 三阶段 prompt（开关门控，关闭则 prompt 与现状逐字一致）|
 
 ### 适用边界与约束
 
@@ -143,6 +144,10 @@
   </tr>
 </table>
 
+> **检索层（横切）**：`src/retrieval/` 把上述各层「渲染进报告后即丢弃」的文本沉淀为语料（`documents` 表），
+> 提供 BM25 词法检索 —— 既支撑 `--recall` 独立语义搜索，又把检索证据注入 AI 三阶段 prompt（RAG，开关门控）。
+> 经 `Retriever` 协议封装，日后可平滑升级 embedding 后端。
+
 ### 快速命令速查
 
 | 命令 | 用途 |
@@ -151,6 +156,7 @@
 | `python3 run.py --backtest` | 同上，并附带回测分析（注入报告第九章） |
 | `python3 run.py --analyze 513100` | 单只基金综合研判（支持代码或名称关键词） |
 | `python3 run.py --search 纳斯达克` | 搜索基金代码 |
+| `python3 run.py --recall 美联储降息` | 语义检索已沉淀语料（叙事/新闻/研判/历史报告），独立、不触发采集 |
 | `python3 run.py --check-holdings` | 持仓健康诊断（读取 `config/my_holdings.yaml`） |
 | `python3 scheduler.py` | 每日定时调度（北京时间 08:30） |
 | `python3 backtest.py --attribution` | 独立回测 + 因子归因分析 |
@@ -423,7 +429,7 @@ python3 tools/download_seed_data.py        # 一次性下载基金净值种子 C
 ```
 fund-research/
 ├── run.py                          # 一键入口：采集 → 信号 → 评分 → 组合 → 报告
-│                                   # 子命令：--analyze / --search / --check-holdings
+│                                   # 子命令：--analyze / --search / --recall / --check-holdings
 ├── scheduler.py                    # 每日定时调度（北京时间 08:30）
 ├── backtest.py                     # 回测分析入口
 ├── requirements.lock               # 锁定版本（可复现环境）
@@ -477,13 +483,19 @@ fund-research/
 │   │   ├── phase3_adversarial_reviewer.py # Phase 3：对抗式审查（挑错子智能体，默认关闭）
 │   │   ├── schemas.py             # Tool use JSON Schema
 │   │   └── backend.py / client.py / cache_strategy.py
+│   ├── retrieval/                 # 检索层（BM25 词法，可升级 embedding）
+│   │   ├── tokenize.py           # 零依赖中英混合分词（CJK 字符二元组）
+│   │   ├── bm25.py               # Okapi BM25 + Retriever 协议 + Hit
+│   │   ├── store.py              # documents 表读写（内容寻址去重）
+│   │   ├── recall.py             # 高层检索入口 + RAG 证据块（CLI/注入共用）
+│   │   └── ingest.py             # 三源语料汇聚（叙事/研判/历史报告）
 │   ├── backtester/
 │   │   └── engine.py              # 走向前回测引擎（无前视偏差）
 │   └── utils/
 │       ├── config.py / database.py / provenance.py
 │       ├── portfolio_tracker.py   # 持仓追踪 + 回撤止损
 │       └── fund_universe.py       # 基金标的库 + 分类 / 去重规则
-├── tests/                          # 单元 + 集成测试套件（pytest，225 用例）
+├── tests/                          # 单元 + 集成测试套件（pytest，257 用例）
 │   ├── test_pipeline_integration.py  # 主链路集成：评分→组合→回测（真实调用）
 │   ├── test_backtester_basics.py  # 回测引擎基础校验
 │   ├── test_dataframe_guards.py   # 采集层防护（直接调生产函数，非副本）
@@ -497,7 +509,9 @@ fund-research/
 │   ├── test_html_report.py        # HTML 报告转义（XSS 防护回归）
 │   ├── test_data_dictionary.py    # 数据字典与 schema 白名单同步（防漂移）
 │   ├── test_holdings_checker.py   # 持仓诊断逻辑
-│   └── test_macro_fallback.py     # 宏观数据降级回退
+│   ├── test_macro_fallback.py     # 宏观数据降级回退
+│   ├── test_provenance_cache.py   # 内容哈希缓存失效（主键+data_hash+config_hash）
+│   └── test_retrieval.py          # 检索层（分词/BM25/去重/recall/RAG 注入开关）
 ├── tools/
 │   ├── download_seed_data.py      # 净值种子下载
 │   ├── mcp_technical_analysis.py  # MCP 技术分析服务器
@@ -507,7 +521,7 @@ fund-research/
 
 **SQLite 数据库表**（`data/fund_research.db`）：
 
-`macro_data` · `global_macro` · `market_data` · `valuation_data` · `fund_list` · `fund_nav_history` · `fund_holdings` · `fund_performance` · `fund_scores` · `fund_manager` · `fund_turnover` · `fund_fees` · `fund_year_returns` · `news_sentiment` · `market_signals` · `collection_meta`
+`macro_data` · `global_macro` · `market_data` · `valuation_data` · `fund_list` · `fund_nav_history` · `fund_holdings` · `fund_performance` · `fund_scores` · `fund_manager` · `fund_turnover` · `fund_fees` · `fund_year_returns` · `news_sentiment` · `market_signals` · `collection_meta` · `data_cache`（内容哈希缓存索引）· `documents`（检索语料）
 
 ---
 
@@ -590,6 +604,17 @@ fund-research/
 </details>
 
 <details>
+<summary><b>语义检索与 RAG</b></summary>
+
+- ✅ **BM25 词法检索**（`src/retrieval/`）：纯 numpy/collections，零新依赖；中英混合分词（CJK 字符二元组），经 `Retriever` 协议封装，日后可平滑升级 embedding 后端（`retrieval.backend` 切换，store/recall/注入零改动）
+- ✅ **语料沉淀（三源）**：把「用完即弃」文本（市场叙事 / 区域展望 / 单基金研判）、新闻原文（采集时聚合成数值前截留）、历史报告（按 H2 分块）落 `documents` 表；按内容哈希去重（复用 `compute_data_hash`），幂等入库
+- ✅ **`--recall` 独立语义搜索**：在已沉淀语料上检索并按相关度排名输出，独立分支、不触发采集
+- ✅ **RAG 注入 AI 三阶段**：检索证据注入 Phase 1 市场分析 / Phase 2 组合建议 prompt；`retrieval.inject_into_ai` 门控，**关闭则 prompt 与现状逐字一致**（回归保护）
+- ✅ **内容哈希缓存层**（`provenance.py`）：缓存按 主键 + `data_hash` + `config_hash` 失效（配置一变即作废）；原始 payload 内容寻址落 `data/raw/`（不可变快照，供复现/审计）；新增缓存点用 `cached_fetch`
+
+</details>
+
+<details>
 <summary><b>测试套件</b></summary>
 
 - ✅ `test_pipeline_integration` — 主链路集成：`score_all_funds` → `build_portfolio_recommendation` → `run_backtest` 真实调用（含仓位口径一致性回归）
@@ -606,6 +631,8 @@ fund-research/
 - ✅ `test_html_report` — HTML 报告外部/AI 文本转义（存储型 XSS 防护回归）
 - ✅ `test_holdings_checker` — 持仓诊断逻辑（集中度预警、费率计算、健康评级）
 - ✅ `test_macro_fallback` — 宏观数据三级降级回退链路
+- ✅ `test_provenance_cache` — 内容哈希缓存失效（主键 + data_hash + config_hash、超时、快照丢失、不可变快照）
+- ✅ `test_retrieval` — 检索层（CJK 二元组分词、BM25 相关性排序、store 去重幂等、recall 端到端、RAG 注入开关 on/off 逐字一致）
 
 </details>
 
