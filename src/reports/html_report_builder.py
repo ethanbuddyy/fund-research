@@ -1052,6 +1052,12 @@ def _section_adversarial(portfolio: dict) -> str:
         <tbody>{rows}</tbody>
       </table>
     </div>"""
+    elif review.get("overall_verdict") != "sound":
+        # verdict 非 sound 却无具体条目：自相矛盾，提示人工复核而非默认背书
+        table = ('<div style="margin-top:10px;padding:10px 14px;border-radius:var(--radius);'
+                 'background:rgba(245,183,49,.06);border:1px solid rgba(245,183,49,.2);'
+                 'color:var(--amber);font-size:13px;">⚠️ 审查判级非「未发现实质问题」，'
+                 '但未列出任何具体条目——结论与明细不自洽，建议人工复核后再采用。</div>')
     else:
         table = '<div style="margin-top:10px;color:var(--text-dim);font-size:13px;">未提出具体问题。</div>'
 

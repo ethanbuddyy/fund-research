@@ -27,7 +27,13 @@ _SYSTEM_ROLE = """\
 
 严格性校准：
 - material_concerns 仅用于「与数据矛盾」或「无依据且会误导决策」的实质问题。
-- 措辞偏乐观但方向无误 → 至多 minor_concerns。\
+- 措辞偏乐观但方向无误 → 至多 minor_concerns。
+
+一致性要求（必须遵守，违反即为无效输出）：
+- overall_verdict 必须与 findings 自洽：判为 minor_concerns 或 material_concerns 时，
+  findings 至少包含一条具体问题（含数值依据）；该判级即是为这些 finding 而下的。
+- 反之，如果你列不出任何具体问题，就必须判为 sound 并返回空 findings——
+  严禁出现「判为有问题却不给出任何 finding」的自相矛盾结果。\
 """
 
 

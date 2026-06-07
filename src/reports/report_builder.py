@@ -899,6 +899,12 @@ def _s11_adversarial_review(portfolio: dict) -> str:
         head += f"- **小结**：{review['summary']}\n"
 
     if not findings:
+        if review.get("overall_verdict") != "sound":
+            # verdict 非 sound 却无具体条目：自相矛盾，提示人工复核而非默认背书
+            return head + (
+                "\n> ⚠️ 审查判级非「未发现实质问题」，但未列出任何具体条目——"
+                "结论与明细不自洽，建议人工复核后再采用。"
+            )
         return head + "\n_未提出具体问题。_"
 
     rows = ["", "| 严重度 | 类别 | 被质疑的主张 | 问题 | 建议修正 |", "|---|---|---|---|---|"]
