@@ -88,7 +88,7 @@ def check_staleness(max_days: dict | None = None) -> list[str]:
     thresholds = {**defaults, **(max_days or {})}
     meta = read_all()
     warnings = []
-    now = datetime.datetime.utcnow()
+    now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
     for src, max_d in thresholds.items():
         if src not in meta:
             continue
@@ -312,7 +312,7 @@ def cache_get(source: str, source_id: str = "", *, config_hash: str = "",
         import datetime
         try:
             last = datetime.datetime.fromisoformat(row["fetched_at"].replace("Z", ""))
-            if (datetime.datetime.utcnow() - last).total_seconds() > max_age_days * 86400:
+            if (datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) - last).total_seconds() > max_age_days * 86400:
                 return None
         except Exception:
             pass
