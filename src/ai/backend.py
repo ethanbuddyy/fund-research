@@ -81,30 +81,48 @@ def _call_anthropic(client, system, user_parts, tool, model, max_tokens, *, cach
     raise ValueError(f"响应中未找到 tool_use block: {tool['name']}")
 
 
+def _extract_tool_result(response, tool_name: str) -> str | None:
+    """取出可解析为 JSON 的原始串：优先 tool_calls，其次「看起来是 JSON」的 content。
+    纯自然语言作答（非推理模型在 auto 下可能跳过工具直接散文回答）返回 None，
+    由调用方强制工具重试。"""
+    msg = response.choices[0].message
+    if msg.tool_calls:
+        return msg.tool_calls[0].function.arguments
+    content = (msg.content or "").strip()
+    if not content:
+        return None
+    stripped = re.sub(r"^```(?:json)?\s*", "", content, flags=re.IGNORECASE)
+    stripped = re.sub(r"\s*```$", "", stripped).strip()
+    return content if stripped.startswith(("{", "[")) else None
+
+
 def _call_openai(client, system, user_parts, tool, model, max_tokens):
     user_text = "\n\n".join(user_parts)
     oai_tool = _to_openai_tool(tool)
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user_text},
+    ]
 
-    # Thinking/reasoning models (e.g. deepseek-v4-pro) reject forced tool_choice.
-    # Use "auto" so they can decide, then extract the result from wherever it lands.
-    response = client.chat.completions.create(
-        model=model,
-        max_tokens=max_tokens,
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user_text},
-        ],
-        tools=[oai_tool],
-        tool_choice="auto",
-    )
-    msg = response.choices[0].message
+    def _create(tool_choice):
+        return client.chat.completions.create(
+            model=model, max_tokens=max_tokens, messages=messages,
+            tools=[oai_tool], tool_choice=tool_choice,
+        )
 
-    # Prefer tool_calls; fall back to raw content (thinking models may inline JSON).
-    if msg.tool_calls:
-        raw = msg.tool_calls[0].function.arguments
-    elif msg.content:
-        raw = msg.content
-    else:
-        raise ValueError("响应中既无 tool_calls 也无 content")
+    # ① 先 auto：推理模型（如 deepseek-reasoner）拒绝强制 tool_choice，只能用 auto。
+    raw = _extract_tool_result(_create("auto"), tool["name"])
+
+    # ② auto 下非推理模型（如 deepseek-chat）可能不调工具、直接散文作答；
+    #    强制指定该函数再试一次（reasoner 第一次即成功，走不到这里，不受影响）。
+    if raw is None:
+        try:
+            forced = {"type": "function", "function": {"name": tool["name"]}}
+            raw = _extract_tool_result(_create(forced), tool["name"])
+        except Exception as e:
+            raise ValueError(f"强制工具调用重试失败：{e}") from e
+
+    if raw is None:
+        raise ValueError("响应中既无 tool_calls 也无可解析为 JSON 的 content")
 
     return _parse_json(raw)
