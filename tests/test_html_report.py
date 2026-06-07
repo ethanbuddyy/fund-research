@@ -50,7 +50,7 @@ class TestFundsSectionEscaping:
         _assert_escaped(out, XSS)
 
     def test_action_plan_escaped(self):
-        out = h._section_action(self._portfolio())
+        out = h._section_action({}, self._portfolio())
         _assert_escaped(out, XSS)
         _assert_escaped(out, IMG)
 

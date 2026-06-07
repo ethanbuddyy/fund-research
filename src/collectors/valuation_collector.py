@@ -79,7 +79,8 @@ def collect_valuation_data() -> dict:
     # 判断整体可信度
     has_cape = "cape" in saved
     has_pe = "sp500_pe" in saved
-    total_rows = sum(saved.values())
+    # 仅累加整型行数：Shiller 兜底路径会塞入字符串 "_cape_source"，需排除
+    total_rows = sum(v for v in saved.values() if isinstance(v, int))
 
     if has_cape and has_pe:
         # 判断 CAPE 来源决定标签

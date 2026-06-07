@@ -291,6 +291,51 @@ def _s2_data_quality(prov_data: dict, overall_mode: str, stale_warnings: list[st
     return "\n".join(rows)
 
 
+# ── 市场主线的子口径（MD/HTML 共用，单一真相源）────────────────
+
+def primary_contradiction(signal: dict) -> str:
+    """当前主要矛盾：优先 AI Phase 1，否则规则层四分支推断。"""
+    val = signal.get("valuation", {})
+    val_score = val.get("valuation_score", 5)
+    trend_score = signal.get("trend_score", 5)
+    ai_analysis = signal.get("ai_analysis")
+    if ai_analysis and ai_analysis.get("primary_contradiction"):
+        return ai_analysis["primary_contradiction"]
+    val_high = float(val_score or 5) < 5
+    is_trend_strong = trend_strong(trend_score if trend_score is not None else 5)
+    if val_high and is_trend_strong:
+        return f"高估值（CAPE {_num(signal.get('cape'), '.1f')}，估值分 {_score(val_score)}/10）vs 强趋势（趋势分 {_score(trend_score)}/10）——动量暂时压过估值压力"
+    elif val_high:
+        return f"高估值压力（CAPE {_num(signal.get('cape'), '.1f')}，估值分 {_score(val_score)}/10）与偏弱的趋势信号并存——谨慎防御"
+    elif is_trend_strong:
+        return f"估值合理（估值分 {_score(val_score)}/10）+ 强趋势（趋势分 {_score(trend_score)}/10）——进攻型信号"
+    else:
+        return f"估值与趋势均处中性（估值分 {_score(val_score)}/10，趋势分 {_score(trend_score)}/10）——标配均衡"
+
+
+def market_narrative(signal: dict) -> tuple[str, str]:
+    """市场叙事文本与来源标注（AI 增强 / 规则层）。"""
+    ai_analysis = signal.get("ai_analysis")
+    if ai_analysis and ai_analysis.get("market_narrative"):
+        return ai_analysis["market_narrative"], "（AI 增强）"
+    narrative = signal.get("narrative", {})
+    insights = narrative.get("insights", []) if isinstance(narrative, dict) else []
+    text = "\n\n".join(insights[:3]) if insights else "（暂无叙事分析）"
+    return text, "（规则层）"
+
+
+def alloc_logic_text(signal: dict) -> str:
+    """仓位推导逻辑：按综合信号档位给出一句话解释。"""
+    composite = signal.get("composite_signal", "标配稳健")
+    raw = signal.get("timing_score", 5.0) or 5.0
+    return {
+        "重仓进取": f"综合评分 {_num(raw, '.2f')}/10 ≥ 7.0，信号积极，风险资产占比提至上限",
+        "标配稳健": f"综合评分 {_num(raw, '.2f')}/10 在 5.0–7.0 区间，维持均衡配置",
+        "谨慎防守": f"综合评分 {_num(raw, '.2f')}/10 在 3.0–5.0 区间，降低风险敞口，提高现金",
+        "减仓防守": f"综合评分 {_num(raw, '.2f')}/10 < 3.0，大幅减仓，保留流动性应对下行风险",
+    }.get(composite, f"综合评分 {_num(raw, '.2f')}/10")
+
+
 def _s3_market_theme(signal: dict) -> str:
     composite = signal.get("composite_signal", "标配稳健")
     raw = signal.get("timing_score", 5.0) or 5.0
@@ -308,40 +353,9 @@ def _s3_market_theme(signal: dict) -> str:
     sentiment_score_raw = sent.get("score", 50)
     contrarian = 10 - (sentiment_score_raw or 50) / 10
 
-    # 主要矛盾描述
-    ai_analysis = signal.get("ai_analysis")
-    if ai_analysis and ai_analysis.get("primary_contradiction"):
-        contradiction = ai_analysis["primary_contradiction"]
-    else:
-        # 规则层推断主矛盾
-        val_high = float(val_score or 5) < 5
-        is_trend_strong = trend_strong(trend_score if trend_score is not None else 5)
-        if val_high and is_trend_strong:
-            contradiction = f"高估值（CAPE {_num(signal.get('cape'), '.1f')}，估值分 {_score(val_score)}/10）vs 强趋势（趋势分 {_score(trend_score)}/10）——动量暂时压过估值压力"
-        elif val_high:
-            contradiction = f"高估值压力（CAPE {_num(signal.get('cape'), '.1f')}，估值分 {_score(val_score)}/10）与偏弱的趋势信号并存——谨慎防御"
-        elif is_trend_strong:
-            contradiction = f"估值合理（估值分 {_score(val_score)}/10）+ 强趋势（趋势分 {_score(trend_score)}/10）——进攻型信号"
-        else:
-            contradiction = f"估值与趋势均处中性（估值分 {_score(val_score)}/10，趋势分 {_score(trend_score)}/10）——标配均衡"
-
-    # Narrative（优先用 AI Phase 1，否则用规则层）
-    narrative = signal.get("narrative", {})
-    if ai_analysis and ai_analysis.get("market_narrative"):
-        narrative_text = ai_analysis["market_narrative"]
-        narrative_src = "（AI 增强）"
-    else:
-        insights = narrative.get("insights", []) if isinstance(narrative, dict) else []
-        narrative_text = "\n\n".join(insights[:3]) if insights else "（暂无叙事分析）"
-        narrative_src = "（规则层）"
-
-    # 仓位推导
-    alloc_logic = {
-        "重仓进取": f"综合评分 {_num(raw, '.2f')}/10 ≥ 7.0，信号积极，风险资产占比提至上限",
-        "标配稳健": f"综合评分 {_num(raw, '.2f')}/10 在 5.0–7.0 区间，维持均衡配置",
-        "谨慎防守": f"综合评分 {_num(raw, '.2f')}/10 在 3.0–5.0 区间，降低风险敞口，提高现金",
-        "减仓防守": f"综合评分 {_num(raw, '.2f')}/10 < 3.0，大幅减仓，保留流动性应对下行风险",
-    }.get(composite, f"综合评分 {_num(raw, '.2f')}/10")
+    contradiction = primary_contradiction(signal)
+    narrative_text, narrative_src = market_narrative(signal)
+    alloc_logic = alloc_logic_text(signal)
 
     global_macro = signal.get("global_macro", {})
     gm_section = ""
@@ -554,6 +568,29 @@ def _s6_alternates(portfolio: dict, signal: dict) -> str:
     return "\n".join(rows)
 
 
+def region_exposure(all_funds: list) -> dict[str, list[str]]:
+    """按基金名称关键词归类区域暴露（MD/HTML 共用，单一真相源）。
+    值为 ``名称(权重%)`` 字符串列表，保持插入顺序。"""
+    region_keywords = {
+        "美国/北美": ["标普", "S&P", "纳斯达克", "美国", "SP", "US", "America"],
+        "全球发达市场": ["全球", "MSCI", "世界", "Global", "QDII"],
+        "亚太/新兴市场": ["亚太", "亚洲", "新兴", "中国", "港", "日本", "印度"],
+        "行业/主题": ["科技", "医疗", "能源", "消费", "地产", "半导体", "AI"],
+    }
+    exposure: dict[str, list[str]] = {}
+    for f in all_funds:
+        name = f.get("fund_name", "")
+        matched = False
+        for region, keywords in region_keywords.items():
+            if any(kw in name for kw in keywords):
+                exposure.setdefault(region, []).append(f"{name}({f.get('weight', 0):.0f}%)")
+                matched = True
+                break
+        if not matched:
+            exposure.setdefault("其他", []).append(f"{name}({f.get('weight', 0):.0f}%)")
+    return exposure
+
+
 def _s7_exposure_risk(portfolio: dict, signal: dict) -> str:
     core_funds = portfolio.get("core_funds", [])
     sat_funds = portfolio.get("satellite_funds", [])
@@ -568,26 +605,10 @@ def _s7_exposure_risk(portfolio: dict, signal: dict) -> str:
     avg_er = sum(ers) / len(ers) if ers else None
 
     # 区域和类型暴露（从基金名称简单推断）
-    region_keywords = {
-        "美国/北美": ["标普", "S&P", "纳斯达克", "美国", "SP", "US", "America"],
-        "全球发达市场": ["全球", "MSCI", "世界", "Global", "QDII"],
-        "亚太/新兴市场": ["亚太", "亚洲", "新兴", "中国", "港", "日本", "印度"],
-        "行业/主题": ["科技", "医疗", "能源", "消费", "地产", "半导体", "AI"],
-    }
-    region_exposure: dict[str, list[str]] = {}
-    for f in all_funds:
-        name = f.get("fund_name", "")
-        matched = False
-        for region, keywords in region_keywords.items():
-            if any(kw in name for kw in keywords):
-                region_exposure.setdefault(region, []).append(f"{name}({f.get('weight', 0):.0f}%)")
-                matched = True
-                break
-        if not matched:
-            region_exposure.setdefault("其他", []).append(f"{name}({f.get('weight', 0):.0f}%)")
+    region_exp = region_exposure(all_funds)
 
     region_rows = []
-    for region, items in region_exposure.items():
+    for region, items in region_exp.items():
         region_rows.append(f"| {region} | {', '.join(items)} |")
 
     concentration = len(all_funds)
@@ -632,6 +653,27 @@ def _s7_exposure_risk(portfolio: dict, signal: dict) -> str:
 {qdii_risks_md}"""
 
 
+def rule_action_items(signal: dict, portfolio: dict) -> list[str]:
+    """规则层行动条目（无 AI 时的 fallback；MD/HTML 共用，单一真相源）。"""
+    composite = signal.get("composite_signal", "标配稳健")
+    core_pct = portfolio.get("core_allocation_pct", 60)
+    trend_score = signal.get("trend_score") or 5.0
+
+    plan_items = _trigger_conditions(signal, portfolio)
+
+    # 额外规则层动作
+    if composite == "重仓进取":
+        if trend_strong(trend_score):
+            plan_items.append(f"趋势分持续 ≥ {TREND_STRONG:g} 且 VIX 保持 < 20，可将核心仓位上限从 {core_pct:.0f}% 提至 {min(80, core_pct+10):.0f}%")
+    elif composite in ("谨慎防守", "减仓防守"):
+        plan_items.append(f"若 SP500 连续 3 个月回撤超过 10%，考虑分批补仓核心指数 ETF（等权买持）")
+
+    # 换仓门槛
+    plan_items.append("若持仓基金综合评分低于 45 且备选池中有 > 55 分候选，于下次月度评分后执行替换")
+    plan_items.append("每季度末重新运行评分，若信号档位不变且持仓无重大事件，维持现有组合")
+    return plan_items
+
+
 def _s8_action_plan(signal: dict, portfolio: dict) -> str:
     composite = signal.get("composite_signal", "标配稳健")
     vix = signal.get("vix") or 18
@@ -660,20 +702,7 @@ def _s8_action_plan(signal: dict, portfolio: dict) -> str:
         plan_md = "\n".join(items)
         src_note = "_（以上条目由 AI Phase 2 生成，基于当期市场量化数据）_"
     else:
-        # 规则层生成
-        plan_items = _trigger_conditions(signal, portfolio)
-
-        # 额外规则层动作
-        if composite == "重仓进取":
-            if trend_strong(trend_score):
-                plan_items.append(f"趋势分持续 ≥ {TREND_STRONG:g} 且 VIX 保持 < 20，可将核心仓位上限从 {core_pct:.0f}% 提至 {min(80, core_pct+10):.0f}%")
-        elif composite in ("谨慎防守", "减仓防守"):
-            plan_items.append(f"若 SP500 连续 3 个月回撤超过 10%，考虑分批补仓核心指数 ETF（等权买持）")
-
-        # 换仓门槛
-        plan_items.append("若持仓基金综合评分低于 45 且备选池中有 > 55 分候选，于下次月度评分后执行替换")
-        plan_items.append("每季度末重新运行评分，若信号档位不变且持仓无重大事件，维持现有组合")
-
+        plan_items = rule_action_items(signal, portfolio)
         plan_md = "\n".join(f"- {item}" for item in plan_items)
         src_note = "_（以上条目由规则层生成；开启 AI 分析后将提供更精细的操作建议）_"
 

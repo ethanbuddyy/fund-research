@@ -27,8 +27,8 @@ ai_analysis:
   enabled: false                  # 总开关：false 则完全不调用 LLM
   provider: "anthropic"           # anthropic / deepseek / openai
   # api_key: ""                   # 也可用环境变量 ANTHROPIC_API_KEY / DEEPSEEK_API_KEY / OPENAI_API_KEY
-  phase1_model: "claude-sonnet-4-6"
-  phase2_model: "claude-sonnet-4-6"
+  phase1_model: "claude-sonnet-4-6"   # provider=deepseek 时改用 deepseek-reasoner / deepseek-chat
+  phase2_model: "claude-sonnet-4-6"   # 切换 provider 后务必改模型名，否则默认 claude-* 会 404
   skip_on_mock_data: true         # 数据为 mock 时跳过 AI，避免给模拟数据"背书"
 
   # Phase3 对抗式审查：由"只负责挑错"的子智能体复核 Phase2 决策，专抓
