@@ -37,15 +37,24 @@ config/settings.yaml + src/domain/factor_config.py   ← 指标字典/权重(唯
 六因子与区域权重在 `src/domain/factor_config.py`,`signals.py` 与 `backtester/engine.py`
 **共同引用此处**。新增/改阈值同步改字典,勿在代码硬编码。〔代码强制:权重集中定义〕
 
-**2. LLM 只读不执行** —— 量化计算全在 `quant` 链路(collectors→analyzers→recommender)纯函数完成;
-LLM 仅做语言增强,**不决定数据源、不改数字**。AI 受 `settings.yaml: ai_analysis.enabled`
-总开关 + `skip_on_mock_data` 闸门控制。〔代码强制:仅 `src/ai/client.py` 接触 LLM SDK〕
+**2. LLM 只读不执行 + 不造数字** —— 量化计算全在 `quant` 链路(collectors→analyzers→recommender)
+纯函数完成;LLM 仅做语言增强,**不决定数据源、不改数字、不编造数字**。AI 受
+`settings.yaml: ai_analysis.enabled` 总开关 + `skip_on_mock_data` 闸门控制。
+**数字纪律(prompt 强制)**:LLM 只能引用「输入中已给的量化事实」;系统**算不出**的指标
+(情景收益率/alpha/回撤/发生概率/beta/历史分位均值/类比年份)**禁止给具体数值**,只用定性方向语。
+情景仓位更进一步——LLM 只选 `target_tier`(档名枚举)+ 基金调整方向,**绝对百分比由
+`domain/scoring.py: POSITION_TIERS` 确定性回填**,LLM 不自算、不把多基金权重相加推总仓位
+(否则必现算术矛盾)。改 Phase1/2 的 schema/prompt 时务必保留这些约束,这是 Claude 输出质量的底线。
+〔代码强制:仅 `src/ai/client.py` 接触 LLM SDK;provider=anthropic/deepseek/openai,OpenAI 兼容
+路径已适配 DeepSeek 思考型模型工具调用(`backend.py`)〕
 
 **3. 决策层 ↔ 报告层 单向** —— 决策层产出 `signal`/`scores_df`/`portfolio`(内存 dict,契约见
 `src/domain/types.py: MarketSignal`);报告层只消费,不反向调决策重算。AI 三阶段挂载点:
-phase1 嵌在 `recommender/signals.py`,phase2/phase3 在 `src/reports/`。
-〔现状:`recommender` 不 import `reports`;AI 隔离在 `src/ai/`。注意——文档理想中的
-`shared/` JSON 物理隔离墙在本项目**未落地**,signal 以内存 dict 传递,改字段名须顾下游〕
+phase1 嵌在 `recommender/signals.py`,**phase2 与 phase3 均在 `recommender/portfolio.py` 调用**
+(phase3 紧随 phase2 复核其产物),报告层 `src/reports/` 只**渲染** phase3 结果
+(`_s11_adversarial_review`),不调用 AI。〔现状:`recommender` 不 import `reports`;AI 隔离在
+`src/ai/`,AI 层不反向 import 报告层(`domain/scoring.py` 作为最底层供两边共用情景渲染纯函数)。
+注意——文档理想中的 `shared/` JSON 物理隔离墙在本项目**未落地**,signal 以内存 dict 传递,改字段名须顾下游〕
 
 **4. 溯源必含 + 内容哈希缓存** —— 两层都在 `src/utils/provenance.py`:
 (a) 模式溯源:`record(source, mode)` 标注 real/partial/mock,`overall_mode()` 聚合
@@ -78,6 +87,17 @@ phase1 嵌在 `recommender/signals.py`,phase2/phase3 在 `src/reports/`。
 - **实际GDP**:周期判断用 `GDPC1`(实际GDP)而非名义 `GDP`,否则通胀算进增长→系统性偏"扩张"。
 - **TypedDict 是契约**:`signal`/`portfolio` 跨 8+ 模块传递;改 key 名前 grep 全下游,
   类型检查(mypy/pyright)能帮你发现遗漏。
+- **仓位档位单一真相源**:`domain/scoring.py: POSITION_TIERS`(4 档→核心/卫星/现金)被
+  `classify_signal`、报告情景渲染(`format_scenario_case`)、AI 情景三处共用。改档位数字只动这里;
+  **绝不让 LLM 在 prompt 里自己写仓位百分比**(回归会立刻引出算术矛盾,见纪律#2)。
+- **Phase3 审查事实须与 Phase2 同源(防漂移)**:`phase3_adversarial_reviewer._format_facts`
+  提供的量化事实**必须覆盖 Phase1/2 决策时实际所见的同一套数据**(因子分/估值含 CAPE 分位/
+  宏观含核心 PCE/分区域 GDP/个基细分分),否则审查员会把「决策引用了此处缺失的数据」
+  误判为「无依据」的**假阳性**。个基细分分字段须与 `phase2_portfolio_advisor._format_funds`
+  保持同步(已在两处 docstring 互相标注)。
+- **思考型模型的 max_tokens**:DeepSeek `deepseek-v4-pro`/`reasoner` 等的 reasoning_tokens
+  也计入 `max_tokens`,过小会被推理榨干致输出截断;Phase3 `adversarial_review.max_tokens`
+  须给足(claude 3000 够,思考型给 8000)。该项在 `settings.yaml`(gitignored),换机须重配。
 
 ## 入口命令
 
