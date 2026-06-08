@@ -42,8 +42,15 @@ def _fmt(v, suffix=""):
 
 
 def _format_facts(signal: dict, portfolio: dict) -> str:
-    """把审查所需的量化事实压缩成一段，供审查员据此核对决策。"""
+    """把审查所需的量化事实压缩成一段，供审查员据此核对决策。
+
+    关键：这里提供的事实必须覆盖 Phase1/Phase2 决策时实际看到的同一套数据，
+    否则审查员会把「决策引用了此处缺失的数据」误判为「无依据」（假阳性）。
+    宏观明细对齐 macro_analyzer 输出；个基细分分对齐 phase2_portfolio_advisor
+    的 _format_funds（绩效/风险/策略/稳定性/费率），改那边须同步改这里。
+    """
     val = signal.get("valuation") or {}
+    macro = signal.get("macro") or {}
     lines = [
         "=== 量化事实（审查基准，决策中的主张必须能追溯到这里）===",
         f"综合信号：{signal.get('composite_signal', 'N/A')}"
@@ -51,13 +58,38 @@ def _format_facts(signal: dict, portfolio: dict) -> str:
         f"建议仓位：核心 {(signal.get('core_allocation') or 0)*100:.0f}% / "
         f"卫星 {(signal.get('satellite_allocation') or 0)*100:.0f}% / "
         f"现金 {(signal.get('cash_allocation') or 0)*100:.0f}%",
-        f"CAPE {_fmt(signal.get('cape'))} | 标普PE {_fmt(val.get('sp500_pe'))} | "
+        f"CAPE {_fmt(signal.get('cape'))}（历史第 {_fmt(val.get('cape_percentile'))}% 分位，"
+        f"来源 {val.get('cape_source', 'N/A')}）| 标普PE {_fmt(val.get('sp500_pe'))} | "
+        f"巴菲特指标 {_fmt(signal.get('buffett_indicator'))} | "
+        f"股权风险溢价ERP {_fmt(signal.get('equity_risk_premium'), '%')}",
         f"VIX {_fmt(signal.get('vix'))} | 趋势分 {_fmt(signal.get('trend_score'))}/10 | "
         f"信用利差分 {_fmt(signal.get('credit_score'))}/10",
         f"估值判断：{val.get('valuation_level', 'N/A')} | "
-        f"宏观周期：{signal.get('macro_cycle', 'N/A')}",
+        f"宏观周期：{signal.get('macro_cycle', 'N/A')}"
+        f"（周期分 {_fmt(macro.get('cycle_score'))}/10）",
+        f"宏观明细：GDP增长 {_fmt(macro.get('gdp_growth'), '%')} | "
+        f"通胀（{macro.get('inflation_gauge', 'N/A')}）{_fmt(macro.get('inflation'), '%')} | "
+        f"失业率 {_fmt(macro.get('unemployment'), '%')} | "
+        f"联邦基金利率 {_fmt(macro.get('fed_rate'), '%')} | "
+        f"10Y-2Y利差 {_fmt(macro.get('yield_curve'))} | "
+        f"利率方向 {signal.get('fed_direction', 'N/A')}",
         f"数据可信度：{signal.get('data_source', 'N/A')}（real/partial/mock）",
     ]
+
+    # 全球宏观分区域明细（决策可能据此做地区倾斜，须与 phase1 喂的口径一致）
+    gm = signal.get("global_macro") or {}
+    regions = gm.get("regions") or {}
+    if gm.get("available") and regions:
+        lines.append("全球宏观分区域（GDP增长/通胀/失业率，YoY%）：")
+        for region, d in regions.items():
+            lines.append(
+                f"  - {region}：GDP {_fmt(d.get('gdp_growth'), '%')} | "
+                f"通胀 {_fmt(d.get('inflation'), '%')} | "
+                f"失业 {_fmt(d.get('unemployment'), '%')} | 评估 {d.get('label', 'N/A')}"
+            )
+        if gm.get("strongest") or gm.get("weakest"):
+            lines.append(f"  （最强：{gm.get('strongest', 'N/A')} / 最弱：{gm.get('weakest', 'N/A')}）")
+
     if signal.get("stop_loss_triggered"):
         lines.append("⚠️ 止损已触发：信号已被强制降至「减仓防守」档。")
 
@@ -71,10 +103,18 @@ def _format_facts(signal: dict, portfolio: dict) -> str:
             f"现金 {_fmt(portfolio.get('cash_allocation_pct'))}%"
         )
         for f in all_f:
+            er = f.get("expense_ratio")
+            er_str = f"{er*100:.2f}%" if er is not None else "N/A"
             lines.append(
                 f"- [{f.get('role', '—')}] {f.get('fund_code', '')} "
-                f"{f.get('fund_name', '')}：权重 {_fmt(f.get('weight'))}%，"
-                f"综合分 {_fmt(f.get('score') or f.get('total_score'))}"
+                f"{f.get('fund_name', '')}：权重 {_fmt(f.get('weight'))}% | "
+                f"单基金信号 {f.get('signal', 'N/A')} | "
+                f"综合分 {_fmt(f.get('score') or f.get('total_score'))} | "
+                f"绩效分 {_fmt(f.get('performance_score'))} | "
+                f"风险分 {_fmt(f.get('risk_score'))} | "
+                f"策略匹配 {_fmt(f.get('strategy_score'))} | "
+                f"稳定性 {_fmt(f.get('consistency_score'))} | "
+                f"费率 {er_str}"
             )
     return "\n".join(lines)
 
