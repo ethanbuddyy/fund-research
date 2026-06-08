@@ -155,9 +155,31 @@ PHASE2_TOOL = {
             "scenario_analysis": {
                 "type": "object",
                 "properties": {
-                    "bull_case": {"type": "string"},
-                    "bear_case": {"type": "string"},
-                    "base_case": {"type": "string"},
+                    "bull_case": {
+                        "type": "string",
+                        "description": (
+                            "牛市情景，按「触发条件 → 应对动作 → 方向性影响」三段式展开。"
+                            "触发条件须基于输入已有指标（如 VIX、趋势分、信用利差分、各因子分）；"
+                            "应对动作给仓位方向（增持/减持/上调上限等）。"
+                            "严禁给出预期收益率/年化回报/alpha/回撤幅度/发生概率等系统未计算的数字，"
+                            "只能用定性表述（如'上行空间打开''动量延续'）。"
+                        ),
+                    },
+                    "bear_case": {
+                        "type": "string",
+                        "description": (
+                            "熊市情景，同样按「触发条件 → 应对动作 → 方向性影响」三段式展开，"
+                            "且应对动作须覆盖全部核心+卫星持仓的处置，使仓位变动百分比自洽。"
+                            "严禁给出回撤幅度/预期亏损/发生概率等系统未计算的数字，只用定性表述。"
+                        ),
+                    },
+                    "base_case": {
+                        "type": "string",
+                        "description": (
+                            "基准情景，按「触发条件 → 应对动作 → 方向性影响」三段式展开。"
+                            "严禁给出预期收益率/年化回报/alpha/发生概率等系统未计算的数字，只用定性表述。"
+                        ),
+                    },
                 },
                 "required": ["bull_case", "bear_case", "base_case"],
             },
