@@ -1,5 +1,36 @@
 """Tool use schemas for Phase 1 and Phase 2 Claude analysis."""
 
+# 情景三元组：触发条件（定性，基于已有指标）+ 目标档位（从 4 档枚举里选）+ 基金方向。
+# 绝对仓位百分比由系统按 target_tier 确定性填充，故此处不含任何收益率/百分比字段，
+# LLM 不碰算术 → 从根上消除"仓位加减对不齐"的矛盾。target_tier 枚举须与
+# domain/scoring.py: POSITION_TIERS 的键保持一致。
+_SCENARIO_CASE = {
+    "type": "object",
+    "properties": {
+        "trigger": {
+            "type": "string",
+            "description": (
+                "触发该情景的条件，必须基于输入中已有的量化指标（如 VIX、趋势分、"
+                "信用利差分、各因子分、失业率等）设定阈值，表述为规则而非预测。"
+            ),
+        },
+        "target_tier": {
+            "type": "string",
+            "enum": ["重仓进取", "标配稳健", "谨慎防守", "减仓防守"],
+            "description": "该情景下应切换到的目标仓位档位（仅选档名，绝对百分比由系统填充）。",
+        },
+        "fund_actions": {
+            "type": "string",
+            "description": (
+                "档位内部的基金调整方向，只说方向不写百分比（如'增持低费率宽基核心、"
+                "减持高波动卫星、清仓跟踪误差大的标的'）。须覆盖需要变动的核心+卫星持仓。"
+                "严禁出现年化收益率/alpha/回撤幅度/发生概率等系统未计算的数字。"
+            ),
+        },
+    },
+    "required": ["trigger", "target_tier", "fund_actions"],
+}
+
 PHASE1_TOOL = {
     "name": "analyze_market_context",
     "description": "输出结构化市场分析，识别主要矛盾和因子关系",
@@ -154,32 +185,14 @@ PHASE2_TOOL = {
             },
             "scenario_analysis": {
                 "type": "object",
+                "description": (
+                    "三种情景下的应对预案。每个情景输出结构化三元组，"
+                    "绝对仓位百分比由系统按目标档位确定性填充，你不要自行计算或书写百分比。"
+                ),
                 "properties": {
-                    "bull_case": {
-                        "type": "string",
-                        "description": (
-                            "牛市情景，按「触发条件 → 应对动作 → 方向性影响」三段式展开。"
-                            "触发条件须基于输入已有指标（如 VIX、趋势分、信用利差分、各因子分）；"
-                            "应对动作给仓位方向（增持/减持/上调上限等）。"
-                            "严禁给出预期收益率/年化回报/alpha/回撤幅度/发生概率等系统未计算的数字，"
-                            "只能用定性表述（如'上行空间打开''动量延续'）。"
-                        ),
-                    },
-                    "bear_case": {
-                        "type": "string",
-                        "description": (
-                            "熊市情景，同样按「触发条件 → 应对动作 → 方向性影响」三段式展开，"
-                            "且应对动作须覆盖全部核心+卫星持仓的处置，使仓位变动百分比自洽。"
-                            "严禁给出回撤幅度/预期亏损/发生概率等系统未计算的数字，只用定性表述。"
-                        ),
-                    },
-                    "base_case": {
-                        "type": "string",
-                        "description": (
-                            "基准情景，按「触发条件 → 应对动作 → 方向性影响」三段式展开。"
-                            "严禁给出预期收益率/年化回报/alpha/发生概率等系统未计算的数字，只用定性表述。"
-                        ),
-                    },
+                    "bull_case": _SCENARIO_CASE,
+                    "bear_case": _SCENARIO_CASE,
+                    "base_case": _SCENARIO_CASE,
                 },
                 "required": ["bull_case", "bear_case", "base_case"],
             },

@@ -12,6 +12,7 @@ import traceback
 
 from .backend import call_with_tools
 from .schemas import PHASE3_TOOL
+from ..domain.scoring import format_scenario_case
 from ..utils.config import load_config
 
 _SYSTEM_ROLE = """\
@@ -131,10 +132,10 @@ def _format_decision(ai_decision: dict) -> str:
 
     sc = ai_decision.get("scenario_analysis") or {}
     if isinstance(sc, dict) and any(sc.values()):
-        lines.append(
-            f"情景：牛 {sc.get('bull_case', '—')} | "
-            f"基 {sc.get('base_case', '—')} | 熊 {sc.get('bear_case', '—')}"
-        )
+        lines.append("情景（目标档位的绝对仓位由系统确定性填充，非决策自算）：")
+        lines.append(f"  - 牛：{format_scenario_case(sc.get('bull_case'))}")
+        lines.append(f"  - 基：{format_scenario_case(sc.get('base_case'))}")
+        lines.append(f"  - 熊：{format_scenario_case(sc.get('bear_case'))}")
 
     rats = ai_decision.get("fund_rationales") or []
     if rats:

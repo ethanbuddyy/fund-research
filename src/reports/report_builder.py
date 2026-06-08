@@ -23,6 +23,7 @@ from ..domain.labels import (
     trend_strong, TREND_STRONG,
 )
 from ..domain.types import MarketSignal, PortfolioRecommendation
+from ..domain.scoring import format_scenario_case
 
 
 # ─────────────────────────────────────────────────────────────
@@ -429,9 +430,9 @@ def _s4_allocation(signal: dict, portfolio: dict) -> str:
 
 | 情景 | 描述 |
 |---|---|
-| 牛市情景 | {sc.get('bull_case', '—')} |
-| 基准情景 | {sc.get('base_case', '—')} |
-| 熊市情景 | {sc.get('bear_case', '—')} |
+| 牛市情景 | {format_scenario_case(sc.get('bull_case'))} |
+| 基准情景 | {format_scenario_case(sc.get('base_case'))} |
+| 熊市情景 | {format_scenario_case(sc.get('bear_case'))} |
 """
 
     return f"""## 四、资产配置建议

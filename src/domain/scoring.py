@@ -64,6 +64,17 @@ def cost_score(expense_ratio: float, cfg: dict) -> float:
         return max(0.0, 5.0 - (expense_ratio - max_er) * 100.0)
 
 
+# 仓位档位表（单一真相源）：档位名 → (核心, 卫星, 现金)，三者和为 1.0。
+# classify_signal、报告情景渲染、AI 情景审查均引用此表，确保绝对仓位数字
+# 由确定性逻辑给出，LLM 只负责"选哪个档"而不自行计算百分比（杜绝算术矛盾）。
+POSITION_TIERS: dict[str, tuple[float, float, float]] = {
+    "重仓进取": (0.70, 0.25, 0.05),
+    "标配稳健": (0.60, 0.30, 0.10),
+    "谨慎防守": (0.50, 0.20, 0.30),
+    "减仓防守": (0.35, 0.15, 0.50),
+}
+
+
 def classify_signal(composite_raw: float) -> tuple[str, float, float, float]:
     """将综合评分映射为信号档位和仓位建议。
 
@@ -71,13 +82,48 @@ def classify_signal(composite_raw: float) -> tuple[str, float, float, float]:
         (composite_signal, core_alloc, satellite_alloc, cash_alloc)
     """
     if composite_raw >= 7.0:
-        return "重仓进取", 0.70, 0.25, 0.05
+        name = "重仓进取"
     elif composite_raw >= 5.0:
-        return "标配稳健", 0.60, 0.30, 0.10
+        name = "标配稳健"
     elif composite_raw >= 3.0:
-        return "谨慎防守", 0.50, 0.20, 0.30
+        name = "谨慎防守"
     else:
-        return "减仓防守", 0.35, 0.15, 0.50
+        name = "减仓防守"
+    core, satellite, cash = POSITION_TIERS[name]
+    return name, core, satellite, cash
+
+
+def tier_allocation_str(tier: str) -> str:
+    """档位名 → '核心60%/卫星30%/现金10%'；未知档位返回空串。"""
+    alloc = POSITION_TIERS.get(tier)
+    if not alloc:
+        return ""
+    c, s, h = alloc
+    return f"核心{c*100:.0f}%/卫星{s*100:.0f}%/现金{h*100:.0f}%"
+
+
+def format_scenario_case(case) -> str:
+    """把单个情景（结构化 dict 或旧式纯字符串）渲染为一行可读文本。
+
+    结构化字段：trigger（触发条件）/ target_tier（目标档位，取自 POSITION_TIERS）/
+    fund_actions（基金方向）。目标档位的绝对仓位由 tier_allocation_str 确定性填充，
+    LLM 不在文字里写百分比，从根上消除"加减对不齐"的算术矛盾。
+    兼容降级：若模型仍返回纯字符串，原样透传。
+    """
+    if isinstance(case, str):
+        return case
+    if not isinstance(case, dict):
+        return "—"
+    parts = []
+    if case.get("trigger"):
+        parts.append(f"触发：{case['trigger']}")
+    tier = case.get("target_tier")
+    if tier:
+        alloc = tier_allocation_str(tier)
+        parts.append(f"目标档位：{tier}（{alloc}）" if alloc else f"目标档位：{tier}")
+    if case.get("fund_actions"):
+        parts.append(f"操作：{case['fund_actions']}")
+    return " ｜ ".join(parts) if parts else "—"
 
 
 def apply_user_profile(

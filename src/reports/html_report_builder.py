@@ -19,6 +19,7 @@ from .report_builder import (
     _key_conclusions, _trigger_conditions, primary_contradiction,
     market_narrative, alloc_logic_text, region_exposure, rule_action_items,
 )
+from ..domain.scoring import format_scenario_case
 
 # ─────────────────────────────────────────────────────────────
 # 公共入口
@@ -931,11 +932,11 @@ def _section_action(signal: dict, portfolio: dict) -> str:
 def _section_scenario(portfolio: dict) -> str:
     ai_dec = portfolio.get("ai_decision") or {}
     sc     = ai_dec.get("scenario_analysis") or {}
-    bull   = sc.get("bull_case", "")
-    base   = sc.get("base_case", "")
-    bear   = sc.get("bear_case", "")
-    if not any([bull, base, bear]):
+    if not any([sc.get("bull_case"), sc.get("base_case"), sc.get("bear_case")]):
         return ""
+    bull   = format_scenario_case(sc.get("bull_case"))
+    base   = format_scenario_case(sc.get("base_case"))
+    bear   = format_scenario_case(sc.get("bear_case"))
 
     def _clip(s, n=200):
         clipped = (s or "")[:n] + ("…" if len(s or "") > n else "")

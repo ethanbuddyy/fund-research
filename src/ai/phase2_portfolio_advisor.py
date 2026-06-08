@@ -26,7 +26,12 @@ _SYSTEM_ROLE = """\
   历史类比年份的指标值。需要表达强弱时，用"较高/中等/有限""上行空间打开/下行风险加大"等。
 - 触发阈值（如"VIX 突破25""信用利差走阔"）属于你设定的规则条件，可以保留，但必须
   基于输入中已有的指标，且表述为"规则"而非"预测"。
-- 做仓位加减时务必让百分比自洽（各仓位变动之和 = 目标总仓位变化），动手前自行验算一遍。
+- 仓位档位（重仓进取/标配稳健/谨慎防守/现金为王等）的绝对百分比由系统按档位表确定性
+  给出，你【不要】自己计算或书写核心/卫星/现金的百分比，也【不要】把多只基金的权重
+  增减相加去推总仓位——只需指明"切换到哪个档"和"档内基金调整方向"。scenario_analysis
+  的每个情景必须选定一个 target_tier（档名），fund_actions 只写方向不写百分比。
+- position_sizing_notes 同理：表述为"满足条件 X 则切换至『某档』并增持/减持某类基金"，
+  引用档名而非自算百分比。
 
 cycle_fit 写作要求（必须遵守）：
 ❌ 差示例："该基金在当前市场环境下表现稳健，适合配置。"
@@ -76,12 +81,18 @@ def _format_phase1_summary(phase1: dict) -> str:
 
 
 def _format_funds(portfolio: dict, market_signal: dict) -> str:
+    from ..domain.scoring import POSITION_TIERS
+    tier_lines = "；".join(
+        f"{name}=核心{c*100:.0f}/卫星{s*100:.0f}/现金{h*100:.0f}"
+        for name, (c, s, h) in POSITION_TIERS.items()
+    )
     lines = [
         "=== 候选基金详情（供本次决策使用）===",
         f"综合信号：{market_signal.get('composite_signal', 'N/A')}，"
         f"建议仓位：核心{market_signal.get('core_allocation', 0)*100:.0f}% / "
         f"卫星{market_signal.get('satellite_allocation', 0)*100:.0f}% / "
         f"现金{market_signal.get('cash_allocation', 0)*100:.0f}%",
+        f"仓位档位表（情景/再平衡只需引用档名，绝对百分比由系统填充）：{tier_lines}",
         "",
     ]
 
