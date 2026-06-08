@@ -99,28 +99,48 @@ def _extract_tool_result(response, tool_name: str) -> str | None:
 def _call_openai(client, system, user_parts, tool, model, max_tokens):
     user_text = "\n\n".join(user_parts)
     oai_tool = _to_openai_tool(tool)
-    messages = [
+    base_messages = [
         {"role": "system", "content": system},
         {"role": "user", "content": user_text},
     ]
 
-    def _create(tool_choice):
+    def _create(tool_choice, messages):
         return client.chat.completions.create(
             model=model, max_tokens=max_tokens, messages=messages,
             tools=[oai_tool], tool_choice=tool_choice,
         )
 
-    # ① 先 auto：推理模型（如 deepseek-reasoner）拒绝强制 tool_choice，只能用 auto。
-    raw = _extract_tool_result(_create("auto"), tool["name"])
+    # ① 先 auto：推理模型（如 deepseek-reasoner / deepseek-v4-pro）拒绝强制 tool_choice，只能用 auto。
+    raw = _extract_tool_result(_create("auto", base_messages), tool["name"])
 
     # ② auto 下非推理模型（如 deepseek-chat）可能不调工具、直接散文作答；
     #    强制指定该函数再试一次（reasoner 第一次即成功，走不到这里，不受影响）。
+    #    思考型模型会以 400「Thinking mode does not support this tool_choice」拒绝——吞掉，落到 ③。
     if raw is None:
         try:
             forced = {"type": "function", "function": {"name": tool["name"]}}
-            raw = _extract_tool_result(_create(forced), tool["name"])
-        except Exception as e:
-            raise ValueError(f"强制工具调用重试失败：{e}") from e
+            raw = _extract_tool_result(_create(forced, base_messages), tool["name"])
+        except Exception:
+            raw = None
+
+    # ③ 思考型模型兜底：不能强制工具，改在 prompt 内联 schema、要求只输出 JSON，
+    #    再走 auto 直接解析 content（推理过程在 reasoning_content，content 即最终答案）。
+    if raw is None:
+        schema = json.dumps(tool["input_schema"], ensure_ascii=False)
+        json_messages = base_messages + [{
+            "role": "user",
+            "content": (
+                "请只输出一个 JSON 对象，不要任何解释文字、不要 markdown 代码块，"
+                f"严格符合以下 JSON Schema：\n{schema}"
+            ),
+        }]
+        content = (_create("auto", json_messages).choices[0].message.content or "").strip()
+        # 思考型模型偶尔仍会在 JSON 前后带话术，截取首个 { 到末个 } 兜底。
+        if content and not content.lstrip().startswith(("{", "[")):
+            i, j = content.find("{"), content.rfind("}")
+            if i != -1 and j > i:
+                content = content[i:j + 1]
+        raw = content or None
 
     if raw is None:
         raise ValueError("响应中既无 tool_calls 也无可解析为 JSON 的 content")
