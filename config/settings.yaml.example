@@ -37,6 +37,8 @@ ai_analysis:
   adversarial_review:
     enabled: false
     # model: ""                   # 默认沿用 phase2_model，可单独覆盖
+    # claude 用 3000 足够；思考型模型（deepseek-v4-pro/reasoner）的 reasoning_tokens
+    # 也计入 max_tokens，3000 会被推理榨干致输出截断 → 调到 8000。非思考模型用不满。
     max_tokens: 3000
 
 # ── FRED 宏观序列（key 任意，值必须是真实 FRED series id）──
