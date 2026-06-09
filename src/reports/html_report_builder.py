@@ -16,10 +16,12 @@ import pandas as pd
 
 from ..domain.labels import vix_elevated, credit_tight
 from ..domain.types import MarketSignal, PortfolioRecommendation
-from .report_builder import (
+# 共享业务函数/常量统一从 report_model 取（不再跨文件 import report_builder 私有函数）
+from .report_model import (
     _key_conclusions, primary_contradiction,
     market_narrative, alloc_logic_text, region_exposure,
     review_findings, _VERDICT_LABEL, _CATEGORY_CN, _snapshot_change_note,
+    signal_threshold_rows, build_report_model, ReportModel,
 )
 from .report_editor import canonical_triggers, headline_triggers
 from ..domain.scoring import format_scenario_case
@@ -37,10 +39,23 @@ def build_html_report(
     output_dir: str | Path = "reports",
 ) -> Path:
     date_str = signal.get("date", datetime.now().strftime("%Y-%m-%d"))
+    # 入口适配器：采集 provenance/config（IO 边界），组装 ReportModel；渲染只消费模型。
+    from ..utils import provenance as prov_mod
+    from ..utils.config import load_config
+    provenance = {
+        "data": signal.get("data_quality") or prov_mod.read_all(),
+        "overall_mode": prov_mod.overall_mode(),
+        "stale_warnings": prov_mod.check_staleness(),
+    }
+    model = build_report_model(
+        signal, portfolio, scores_df, backtest,
+        portfolio.get("previous_portfolio"), provenance, load_config(),
+    )
+
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{date_str}_fund_research_report.html"
-    out_path.write_text(_render(signal, portfolio, scores_df, backtest, date_str), encoding="utf-8")
+    out_path.write_text(_render(model, date_str), encoding="utf-8")
     return out_path
 
 
@@ -373,10 +388,12 @@ tbody td {
 # 主渲染函数
 # ─────────────────────────────────────────────────────────────
 
-def _render(signal: Mapping[str, Any], portfolio: Mapping[str, Any],
-            scores_df: Optional[pd.DataFrame],
-            backtest: Optional[dict],
-            date_str: str) -> str:
+def _render(model: "ReportModel", date_str: str) -> str:
+    # 渲染只消费模型：signal/portfolio/provenance/config 全来自 model，不在此读 IO。
+    signal = model.signal
+    portfolio = model.portfolio
+    scores_df = model.scores_df
+    backtest = model.backtest
 
     composite = signal.get("composite_signal", "标配稳健")
     sig_cls   = _signal_class(composite)
@@ -387,9 +404,8 @@ def _render(signal: Mapping[str, Any], portfolio: Mapping[str, Any],
     sat_pct   = portfolio.get("satellite_allocation_pct", 30)
     cash_pct  = portfolio.get("cash_allocation_pct", 10)
 
-    from src.utils import provenance as prov_mod
-    prov_data = signal.get("data_quality") or prov_mod.read_all()
-    overall_mode = prov_mod.overall_mode()
+    prov_data = model.prov_data
+    overall_mode = model.overall_mode
 
     def _divider(t):
         return (f'<div style="margin:34px 0 6px;padding-bottom:8px;border-bottom:2px solid var(--border);'
@@ -418,10 +434,10 @@ def _render(signal: Mapping[str, Any], portfolio: Mapping[str, Any],
          'font-weight:700;color:var(--text-bright);padding:12px 0;">📎 审计附录'
          '（数据可信度 / 备选池 / 回测 / 算法参数 / 对抗审查全文 — 点击展开）</summary>'
          '<div style="margin-top:12px;">'),
-        _section_data_quality(prov_data, overall_mode),
+        _section_data_quality(prov_data, overall_mode, model.stale_warnings),
         _section_alternates(portfolio),
         _section_backtest(backtest),
-        _section_appendix(signal),
+        _section_appendix(signal, model.config),
         _section_adversarial(portfolio),
         '</div></details>',
         '</div>',
@@ -554,7 +570,8 @@ def _section_conclusion(signal: Mapping[str, Any], portfolio: Mapping[str, Any])
 </div>"""
 
 
-def _section_data_quality(prov_data: Mapping[str, Any], overall_mode: str) -> str:
+def _section_data_quality(prov_data: Mapping[str, Any], overall_mode: str,
+                          stale_warnings: list[str]) -> str:
     items = []
     src_labels = {"macro": "宏观数据", "market": "市场数据",
                   "fund": "基金净值", "valuation": "估值数据", "news": "新闻情绪"}
@@ -579,26 +596,20 @@ def _section_data_quality(prov_data: Mapping[str, Any], overall_mode: str) -> st
         <div class="dq-date">{updated}</div>
       </div>""")
 
-    # 过期数据警告（与 MD 第二章同源）
-    stale_html = ""
-    try:
-        from ..utils import provenance as prov_mod
-        warnings = prov_mod.check_staleness()
-        if warnings:
-            warn_items = "".join(f'<li style="margin-bottom:4px;">{_e(w)}</li>' for w in warnings)
-            stale_html = (
-                '<div style="margin-top:12px;padding:10px 14px;border-radius:var(--radius);'
-                'background:rgba(245,183,49,.06);border:1px solid rgba(245,183,49,.2);">'
-                '<div style="font-size:12px;font-weight:600;color:var(--amber);margin-bottom:6px;">⚠️ 过期数据警告</div>'
-                f'<ul style="margin:0;padding-left:18px;font-size:12px;color:var(--amber);">{warn_items}</ul></div>'
-            )
-        else:
-            stale_html = (
-                '<div style="margin-top:10px;font-size:13px;color:var(--green);">'
-                '✅ 所有数据源均在有效期内。</div>'
-            )
-    except Exception:
-        stale_html = ""
+    # 过期数据警告（与 MD 第二章同源；stale_warnings 由模型传入，渲染不再读 IO）
+    if stale_warnings:
+        warn_items = "".join(f'<li style="margin-bottom:4px;">{_e(w)}</li>' for w in stale_warnings)
+        stale_html = (
+            '<div style="margin-top:12px;padding:10px 14px;border-radius:var(--radius);'
+            'background:rgba(245,183,49,.06);border:1px solid rgba(245,183,49,.2);">'
+            '<div style="font-size:12px;font-weight:600;color:var(--amber);margin-bottom:6px;">⚠️ 过期数据警告</div>'
+            f'<ul style="margin:0;padding-left:18px;font-size:12px;color:var(--amber);">{warn_items}</ul></div>'
+        )
+    else:
+        stale_html = (
+            '<div style="margin-top:10px;font-size:13px;color:var(--green);">'
+            '✅ 所有数据源均在有效期内。</div>'
+        )
 
     # 检索增强层状态（提醒用户该可选板块的开关与语料量；fail-soft）
     retrieval_note = ""
@@ -1165,7 +1176,7 @@ def _bt_metric_row(label: str, sm, ewbh, spm, b6040, key, fmt="pct", dec=2) -> s
     </tr>"""
 
 
-def _section_backtest(backtest: Optional[dict]) -> str:
+def _section_backtest(backtest: Optional[Mapping[str, Any]]) -> str:
     """回测与策略验证（与 MD 第九章同源）。未回测/失败时给出占位说明。"""
     if backtest is None:
         return """
@@ -1307,13 +1318,11 @@ def _section_backtest(backtest: Optional[dict]) -> str:
 </div>"""
 
 
-def _section_appendix(signal: Mapping[str, Any]) -> str:
-    """附录：数据源 / 评分权重 / 信号阈值 / 当期关键原始指标（与 MD 第十章同源）。"""
-    try:
-        from ..utils.config import load_config
-        cfg = load_config()
-    except Exception:
-        cfg = {}
+def _section_appendix(signal: Mapping[str, Any], cfg: Mapping[str, Any]) -> str:
+    """附录：数据源 / 评分权重 / 信号阈值 / 当期关键原始指标（与 MD 第十章同源）。
+
+    cfg 由入口适配器经 ReportModel 传入，渲染过程不再自读配置文件。
+    """
     weights = cfg.get("scoring_weights", {})
     vp = cfg.get("strategy_params", {}).get("valuation_thresholds", {})
 
@@ -1347,11 +1356,9 @@ def _section_appendix(signal: Mapping[str, Any]) -> str:
                           f'<td class="td-right" style="color:var(--text-bright);font-weight:600">{v*100:.0f}%</td></tr>'
                           for k, v in weight_rows)
 
-    threshold_rows = [
-        ("综合评分 ≥ 7.0", "重仓进取：核心70%/卫星25%/现金5%"),
-        ("综合评分 5.0–7.0", "标配稳健：核心60%/卫星30%/现金10%"),
-        ("综合评分 3.0–5.0", "谨慎防守：核心50%/卫星20%/现金30%"),
-        ("综合评分 < 3.0", "减仓防守：核心35%/卫星15%/现金50%"),
+    # 仓位档位取自 POSITION_TIERS 单一真相源（signal_threshold_rows），与 MD 同源，不再硬编码
+    threshold_rows = list(signal_threshold_rows())
+    threshold_rows += [
         ("CAPE 高估线", str(vp.get("cape_overvalued", 30))),
         ("CAPE 低估线", str(vp.get("cape_undervalued", 15))),
     ]

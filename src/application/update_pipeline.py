@@ -72,33 +72,38 @@ def run_update(logger=None) -> tuple[MarketSignal, Any, PortfolioRecommendation]
     analyze_all_funds()
     _log("[4/5] 基金绩效分析完成")
 
-    from src.recommender.signals import generate_market_signal
+    from src.recommender.signals import (
+        generate_market_signal, apply_stop_loss, save_market_signal,
+    )
     from src.recommender.scorer import score_all_funds
     from src.recommender.portfolio import build_portfolio_recommendation
     from src.utils.config import load_config
-    signal = generate_market_signal()
+    from src.utils.portfolio_state_store import (
+        load_previous_portfolio, save_current_portfolio,
+    )
+
+    # ── 状态所有权（阶段1）：本期决策开始前，只读取一次上期组合快照 ──
+    # 之后显式传给「止损检查 / 组合选择 / 报告对比」，杜绝各模块各自读盘导致的
+    # 隐式时序耦合（谁先读、谁先写决定正确性）。
+    previous_portfolio = load_previous_portfolio()
+
+    # 信号生成阶段：先不落库（save=False），待止损覆盖后再持久化最终版本，
+    # 避免数据库存到止损前的旧信号（scheduler/持仓诊断从库里读的须是最终信号）。
+    signal = generate_market_signal(save=False)
     scores_df = score_all_funds(signal)
 
-    # ── 组合浮亏追踪 + 止损检测 ─────────────────────────────────
-    # 必须在 build_portfolio 之前：update_and_check 读取的是「上次运行」写入的
-    # portfolio_snapshot.json，而 build_portfolio 会用本次推荐覆盖该快照。若放在
-    # build_portfolio 之后，读到的就是刚写入的当前净值，本期收益恒为 0（止损失效）。
-    # 同时，止损若触发须先覆盖 signal 的仓位档位，再据此构建组合，保证
-    # 「建议仓位」与「推荐组合权重」口径一致。
+    # ── 组合浮亏追踪 + 止损检测（阶段2）────────────────────────────
+    # 止损检查只读「上期」快照（previous_portfolio），不读本次刚算出的数据；
+    # 触发后用纯函数 apply_stop_loss 生成新信号（不原地改），仓位档位取自
+    # POSITION_TIERS，再据此构建组合，保证「建议仓位」与「推荐组合权重」一致。
     cfg = load_config()
     stop_loss_pct = float((cfg.get("risk_management") or {}).get("stop_loss_pct") or 0)
     stop_loss_info = None
     if stop_loss_pct > 0:
         try:
             from src.utils.portfolio_tracker import update_and_check
-            stop_loss_info = update_and_check(stop_loss_pct)
+            stop_loss_info = update_and_check(stop_loss_pct, previous_portfolio)
             if stop_loss_info.get("triggered"):
-                # 强制降至"减仓防守"档，覆盖信号仓位（须在 build_portfolio 之前）
-                signal["composite_signal"] = "减仓防守"
-                signal["core_allocation"] = 0.35
-                signal["satellite_allocation"] = 0.15
-                signal["cash_allocation"] = 0.50
-                signal["stop_loss_triggered"] = True
                 _log(
                     f"[⚠️ 止损] 组合回撤 {stop_loss_info['drawdown_pct']:.1f}% "
                     f"超过阈值 {stop_loss_pct*100:.0f}%，强制降仓至减仓防守"
@@ -111,11 +116,20 @@ def run_update(logger=None) -> tuple[MarketSignal, Any, PortfolioRecommendation]
                 )
         except Exception as e:
             _log(f"[止损] 浮亏追踪失败（不影响主流程）: {e}")
-    signal["stop_loss"] = stop_loss_info
+    signal = apply_stop_loss(signal, stop_loss_info)
 
-    # 组合构建：使用（可能已被止损覆盖的）signal，并写入本次快照供下次止损追踪
-    portfolio = build_portfolio_recommendation(signal)
+    # 组合构建：使用（可能已被止损覆盖的）最终 signal + 上期快照（换仓门槛/对比）。
+    # build 不再写盘，本期快照数据放在 portfolio["snapshot_payload"]，下面统一提交。
+    portfolio = build_portfolio_recommendation(signal, previous_portfolio=previous_portfolio)
     _log(f"[5/5] 投资信号生成完成 → {signal.get('composite_signal', '—')}")
+
+    # ── 持久化：先存最终信号（止损后唯一版本），再提交本期组合快照 ──
+    # 报告层的「换仓变动」用的是 portfolio 里携带的内存版 previous_portfolio，
+    # 与此处落盘的本期快照无关，故现在提交不会污染本期对比。
+    save_market_signal(signal)
+    snapshot_payload = portfolio.get("snapshot_payload")
+    if snapshot_payload:
+        save_current_portfolio(snapshot_payload)
 
     # ── 语料沉淀：把本次「用完即弃」叙事 + 历史报告收编进检索库（fail-soft）──
     try:

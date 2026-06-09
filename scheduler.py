@@ -34,16 +34,11 @@ logger = logging.getLogger(__name__)
 
 
 def _read_last_signal() -> str | None:
-    """从数据库读取上次保存的综合信号。"""
+    """从数据库读取上次保存的综合信号（经 SignalRepository，不直接拼 SQL）。"""
     try:
-        from src.utils.database import get_connection
-        conn = get_connection()
-        cur = conn.execute(
-            "SELECT composite_signal FROM market_signals ORDER BY date DESC LIMIT 1"
-        )
-        row = cur.fetchone()
-        conn.close()
-        return row["composite_signal"] if row else None
+        from src.utils.signal_repository import load_latest_signal
+        row = load_latest_signal()
+        return row.get("composite_signal") if row else None
     except Exception:
         return None
 

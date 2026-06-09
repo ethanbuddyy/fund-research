@@ -1,25 +1,61 @@
 """投资组合构建与建议"""
-from typing import Any
+from typing import Any, Optional
 from collections.abc import Mapping
-import json
 import pandas as pd
-from pathlib import Path
 from ..utils.database import read_table
 from ..utils.config import load_config
-from ..domain.types import MarketSignal, PortfolioRecommendation
-
-_SNAPSHOT_PATH = Path(__file__).parent.parent.parent / "data" / "portfolio_snapshot.json"
+from ..domain.types import MarketSignal, PortfolioRecommendation, PortfolioState
 
 
 CORE_BENCHMARKS = ["标普500", "S&P", "纳斯达克100", "MSCI全球", "全球"]
 SATELLITE_BENCHMARKS = ["科技", "医疗", "能源", "亚洲", "主动"]
 
 
-def build_portfolio_recommendation(market_signal: MarketSignal, top_n: int = 10) -> PortfolioRecommendation:
+def build_portfolio_recommendation(
+    market_signal: MarketSignal,
+    top_n: int = 10,
+    previous_portfolio: Optional[dict] = None,
+) -> PortfolioRecommendation:
+    """适配器：读库/读配置 → 调纯函数 select_portfolio → 追加 AI → 构造本期快照数据。
+
+    `previous_portfolio` 为上期推荐组合快照原文（由编排层一次性读入并显式传入），
+    用于换仓门槛与报告换仓对比；适配器**不再自行读盘**。也**不再写快照**——本期
+    应提交的快照数据放进返回值 `snapshot_payload`，由编排层在所有「与上期对比」
+    数据计算完成后再统一提交，从根上消除快照的时序耦合。
+    """
     scores_df = read_table("fund_scores")
     funds_df = read_table("fund_list")
     cfg = load_config()
 
+    if scores_df.empty:
+        return _empty_portfolio(market_signal)
+
+    portfolio = select_portfolio(scores_df, funds_df, market_signal,
+                                 previous_portfolio, cfg, top_n)
+
+    # ── AI 阶段二/三：投资决策增强（IO/AI，留在适配器）──────────
+    _apply_ai_enhancements(portfolio, market_signal, cfg)
+
+    # 本期应提交的快照数据（需查最新净值=IO）放进返回值，由编排层稍后统一提交。
+    portfolio["snapshot_payload"] = _build_snapshot_payload(
+        portfolio["core_funds"], portfolio["satellite_funds"], scores_df
+    )
+    return portfolio
+
+
+def select_portfolio(
+    scores_df: pd.DataFrame,
+    funds_df: pd.DataFrame,
+    market_signal: MarketSignal,
+    previous_portfolio: Optional[dict],
+    config: Mapping[str, Any],
+    top_n: int = 10,
+) -> PortfolioRecommendation:
+    """纯函数：内存评分表+基金表+信号+上期快照+配置 → 组合推荐。
+
+    **不读库、不读配置文件、不调 AI、不读写文件、不打印**——可脱离 SQLite/AI
+    用内存数据直接、可重复地测试（回归 test #6）。AI 增强与快照落盘由适配器负责。
+    """
     if scores_df.empty:
         return _empty_portfolio(market_signal)
 
@@ -33,8 +69,8 @@ def build_portfolio_recommendation(market_signal: MarketSignal, top_n: int = 10)
     satellite_alloc = market_signal.get("satellite_allocation", 0.30)
     cash_alloc = market_signal.get("cash_allocation", 0.10)
 
-    score_threshold = cfg.get("rebalancing", {}).get("score_threshold", 10)
-    prev_core_scores, prev_sat_scores = _load_previous_codes()
+    score_threshold = config.get("rebalancing", {}).get("score_threshold", 10)
+    prev_core_scores, prev_sat_scores = _extract_prev_scores(previous_portfolio)
 
     # 核心仓位：宽基指数
     core_funds = _select_core_funds(merged, core_alloc, prev_core_scores, score_threshold)
@@ -56,47 +92,54 @@ def build_portfolio_recommendation(market_signal: MarketSignal, top_n: int = 10)
         "top_picks": merged.head(top_n).to_dict("records"),
         "investment_notes": _generate_notes(market_signal),
         "score_threshold": score_threshold,  # 报告层「未入选原因」据此说明，避免猜测
+        # 上期快照原文：供报告层「换仓变动」对比（报告层不再读盘），首次运行为 None
+        "previous_portfolio": previous_portfolio,
     }
+    return portfolio
 
-    # ── AI 阶段二：投资决策增强（配置开关控制）──────────
+
+def _apply_ai_enhancements(
+    portfolio: PortfolioRecommendation,
+    market_signal: MarketSignal,
+    cfg: Mapping[str, Any],
+) -> None:
+    """AI 阶段二/三增强（IO/AI，就地改写 portfolio）。配置关闭或无 phase1 则直接返回。"""
     cfg_ai = cfg.get("ai_analysis", {})
     ai_phase1 = market_signal.get("ai_analysis")
-    if cfg_ai.get("enabled", False) and ai_phase1 is not None:
-        try:
-            from ..ai.phase2_portfolio_advisor import PortfolioAdvisor
-            ai_decision = PortfolioAdvisor().advise(
-                market_signal=market_signal,
-                ai_phase1=ai_phase1,
-                portfolio=portfolio,
-            )
-            if ai_decision:
-                notes = ai_decision.get("position_sizing_notes")
-                if notes:
-                    portfolio["investment_notes"] = notes
-                portfolio["ai_decision"] = ai_decision
+    if not (cfg_ai.get("enabled", False) and ai_phase1 is not None):
+        return
+    try:
+        from ..ai.phase2_portfolio_advisor import PortfolioAdvisor
+        ai_decision = PortfolioAdvisor().advise(
+            market_signal=market_signal,
+            ai_phase1=ai_phase1,
+            portfolio=portfolio,
+        )
+        if ai_decision:
+            notes = ai_decision.get("position_sizing_notes")
+            if notes:
+                portfolio["investment_notes"] = notes
+            portfolio["ai_decision"] = ai_decision
 
-                # ── AI 阶段三：对抗式审查（默认关闭，需显式开启）──────
-                # 由"只负责挑错"的子智能体复核 Phase2 决策，防止看似合理实则
-                # 与数据矛盾的结论被静默采用。额外消耗 token/延迟，故按需启用。
-                try:
-                    from ..ai.phase3_adversarial_reviewer import AdversarialReviewer, is_enabled
-                    if is_enabled():
-                        review = AdversarialReviewer().review(
-                            market_signal=market_signal,
-                            portfolio=portfolio,
-                            ai_decision=ai_decision,
-                        )
-                        if review:
-                            portfolio["adversarial_review"] = review
-                            print(f"[AI Phase3] 对抗审查：{review.get('overall_verdict')}"
-                                  f"（{len(review.get('findings', []))} 项问题）")
-                except Exception as e:
-                    print(f"[AI Phase3] 对抗审查跳过（不影响主流程）: {e}")
-        except Exception as e:
-            print(f"[AI Phase2] 跳过: {e}")
-
-    _save_portfolio_snapshot(core_funds, satellite_funds, merged[["fund_code", "total_score"]])
-    return portfolio
+            # ── AI 阶段三：对抗式审查（默认关闭，需显式开启）──────
+            # 由"只负责挑错"的子智能体复核 Phase2 决策，防止看似合理实则
+            # 与数据矛盾的结论被静默采用。额外消耗 token/延迟，故按需启用。
+            try:
+                from ..ai.phase3_adversarial_reviewer import AdversarialReviewer, is_enabled
+                if is_enabled():
+                    review = AdversarialReviewer().review(
+                        market_signal=market_signal,
+                        portfolio=portfolio,
+                        ai_decision=ai_decision,
+                    )
+                    if review:
+                        portfolio["adversarial_review"] = review
+                        print(f"[AI Phase3] 对抗审查：{review.get('overall_verdict')}"
+                              f"（{len(review.get('findings', []))} 项问题）")
+            except Exception as e:
+                print(f"[AI Phase3] 对抗审查跳过（不影响主流程）: {e}")
+    except Exception as e:
+        print(f"[AI Phase2] 跳过: {e}")
 
 
 def _extract_scores(bucket: dict) -> dict[str, float]:
@@ -113,69 +156,51 @@ def _extract_scores(bucket: dict) -> dict[str, float]:
     return result
 
 
-def _load_previous_codes() -> tuple[dict[str, float], dict[str, float]]:
-    """读取上次推荐组合，返回 (core_scores, satellite_scores) 两个 {code: score} 字典。
-    首次运行或文件缺失/格式旧版时返回两个空字典（不触发门槛约束）。
+def _extract_prev_scores(previous_portfolio: Optional[dict]) -> tuple[dict[str, float], dict[str, float]]:
+    """从上期快照原文解析出 (core_scores, satellite_scores) 两个 {code: score} 字典。
+
+    快照由编排层经 portfolio_state_store 读入并显式传入（本模块不再读盘）。
+    首次运行（None）或旧格式（无 core/satellite 键）返回两个空字典，不触发门槛约束。
     """
-    if not _SNAPSHOT_PATH.exists():
-        return {}, {}  # 首次运行属正常，不告警
-    try:
-        raw = json.loads(_SNAPSHOT_PATH.read_text(encoding="utf-8"))
-        if isinstance(raw, dict) and "core" in raw and "satellite" in raw:
-            return _extract_scores(raw["core"]), _extract_scores(raw["satellite"])
-        return {}, {}
-    except Exception as e:
-        # 文件存在却读不出 = 损坏，换仓门槛会失效（本期所有持仓都按新基计算），必须可见。
-        print(f"[WARN] 组合快照损坏，换仓门槛本期不生效: {e}")
-        return {}, {}
+    raw = previous_portfolio
+    if isinstance(raw, dict) and "core" in raw and "satellite" in raw:
+        return _extract_scores(raw["core"]), _extract_scores(raw["satellite"])
+    return {}, {}
 
 
 def _get_latest_navs(fund_codes: list) -> dict:
-    """从 fund_nav_history 查各基金最新净值，用于快照记录（止损追踪基准）。"""
-    try:
-        from ..utils.database import get_connection
-        conn = get_connection()
-        try:
-            nav_map = {}
-            for code in fund_codes:
-                row = conn.execute(
-                    "SELECT nav FROM fund_nav_history WHERE fund_code=? ORDER BY date DESC LIMIT 1",
-                    (code,),
-                ).fetchone()
-                if row and row[0] is not None:
-                    nav_map[code] = float(row[0])
-        finally:
-            conn.close()  # 异常路径也要关连接
-        return nav_map
-    except Exception:
-        return {}
+    """最新净值经 FundRepository 读取（适配器不再直接查库）。
+
+    保留此薄包装作为测试接缝（既有用例 monkeypatch 本函数注入内存净值）。
+    """
+    from ..utils.fund_repository import get_latest_navs
+    return get_latest_navs(fund_codes)
 
 
-def _save_portfolio_snapshot(core_funds: list, satellite_funds: list, scores_df: pd.DataFrame):
-    """将本次推荐的基金代码+评分+权重+净值写入快照（止损追踪与换仓门槛共用）。"""
-    try:
-        from datetime import datetime as _dt
-        score_map = dict(zip(scores_df["fund_code"].astype(str), scores_df["total_score"].astype(float)))
-        all_codes = [f["fund_code"] for f in core_funds + satellite_funds]
-        nav_map = _get_latest_navs(all_codes)
+def _build_snapshot_payload(core_funds: list, satellite_funds: list,
+                            scores_df: pd.DataFrame) -> PortfolioState:
+    """构造本期推荐快照数据（代码+评分+权重+净值），**不写盘**。
 
-        def _info(f):
-            return {
-                "score": score_map.get(f["fund_code"], 0.0),
-                "weight_pct": f.get("weight", 0.0),   # 已是 pct（如 20.0 表示 20%）
-                "nav": nav_map.get(f["fund_code"]),    # 快照时点净值，止损追踪基准
-            }
+    返回的 dict 由编排层在所有「与上期对比」展示数据计算完成后，经
+    portfolio_state_store.save_current_portfolio 统一提交（止损追踪与换仓门槛共用）。
+    """
+    from datetime import datetime as _dt
+    score_map = dict(zip(scores_df["fund_code"].astype(str), scores_df["total_score"].astype(float)))
+    all_codes = [f["fund_code"] for f in core_funds + satellite_funds]
+    nav_map = _get_latest_navs(all_codes)
 
-        snapshot = {
-            "date": _dt.now().strftime("%Y-%m-%d"),
-            "core": {f["fund_code"]: _info(f) for f in core_funds},
-            "satellite": {f["fund_code"]: _info(f) for f in satellite_funds},
+    def _info(f):
+        return {
+            "score": score_map.get(f["fund_code"], 0.0),
+            "weight_pct": f.get("weight", 0.0),   # 已是 pct（如 20.0 表示 20%）
+            "nav": nav_map.get(f["fund_code"]),    # 快照时点净值，止损追踪基准
         }
-        _SNAPSHOT_PATH.write_text(json.dumps(snapshot, ensure_ascii=False), encoding="utf-8")
-    except Exception as e:
-        # 快照保存是不可降级的写操作：失败会让下次「换仓门槛」与「止损追踪」静默失效，
-        # 必须让用户可见，而非静默吞掉。
-        print(f"[WARN] 组合快照保存失败（将影响下次换仓门槛/止损追踪）: {e}")
+
+    return {
+        "date": _dt.now().strftime("%Y-%m-%d"),
+        "core": {f["fund_code"]: _info(f) for f in core_funds},
+        "satellite": {f["fund_code"]: _info(f) for f in satellite_funds},
+    }
 
 
 def _select_core_funds(df: pd.DataFrame, alloc: float,

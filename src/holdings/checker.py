@@ -458,11 +458,11 @@ def _safe_float(v) -> Optional[float]:
 
 
 def load_signal_from_db() -> dict:
-    """从数据库读取最新一条市场信号（不触发网络采集）。"""
-    df = read_table("market_signals", "1=1 ORDER BY date DESC LIMIT 1")
-    if df.empty:
+    """从数据库读取最新一条市场信号（经 SignalRepository，不触发网络采集）。"""
+    from ..utils.signal_repository import load_latest_signal
+    row = load_latest_signal()
+    if not row:
         return {}
-    row = df.iloc[0].to_dict()
     # 补全 allocation 字段（DB 存的是小数）
     for k in ("core_allocation", "satellite_allocation", "cash_allocation"):
         v = row.get(k)

@@ -27,6 +27,15 @@ from ..domain.types import MarketSignal, PortfolioRecommendation
 from ..domain.scoring import format_scenario_case
 from ..domain.factor_config import FACTOR_WEIGHTS
 from .report_editor import canonical_triggers, headline_triggers, dedupe_keep_order
+# 跨渲染器共享的业务函数/格式化/常量统一从 report_model 取（单一真相源）；
+# 此处 re-import 既供本模块内部使用，也让既有 rb.* 测试访问保持有效。
+from .report_model import (
+    _num, _score, _pct,
+    _key_conclusions, primary_contradiction, market_narrative, alloc_logic_text,
+    region_exposure, review_findings, _snapshot_change_note,
+    _VERDICT_LABEL, _CATEGORY_CN, signal_threshold_rows,
+    ReportModel, build_report_model,
+)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -40,23 +49,35 @@ def build_report(
     backtest: Optional[Mapping[str, Any]] = None,
     output_dir: str | Path = "reports",
 ) -> Path:
-    """生成 Markdown 投研报告并写入文件，返回文件路径。"""
+    """生成 Markdown 投研报告并写入文件，返回文件路径。
+
+    入口适配器：在此一次性采集 provenance/config（IO 边界），组装 ReportModel，
+    各章节渲染只消费模型，不再自读数据库/配置/快照。
+    """
     from ..utils import provenance as prov_mod
+    from ..utils.config import load_config
 
     date_str = signal.get("date", datetime.now().strftime("%Y-%m-%d"))
-    prov_data = signal.get("data_quality") or prov_mod.read_all()
-    overall_mode = prov_mod.overall_mode()
-    stale_warnings = prov_mod.check_staleness()
+    provenance = {
+        "data": signal.get("data_quality") or prov_mod.read_all(),
+        "overall_mode": prov_mod.overall_mode(),
+        "stale_warnings": prov_mod.check_staleness(),
+    }
+    model = build_report_model(
+        signal, portfolio, scores_df, backtest,
+        portfolio.get("previous_portfolio"), provenance, load_config(),
+    )
 
     # 三层结构(决策摘要 / 证据 / 审计附录):正文只放真正要读的,
     # 数据可信度/备选池/回测/算法参数/对抗审查全文收进折叠的审计附录。
     sections: list[str] = []
-    sections.append(_layer1_decision(signal, portfolio, overall_mode))          # 一、本期决策
-    sections.append(_layer2_evidence(signal, portfolio))                        # 二、为什么(证据)
-    sections.append(_layer3_holdings(signal, portfolio))                        # 三、买什么·卖什么
-    sections.append(_layer4_when_change(signal, portfolio))                     # 四、何时改变
-    sections.append(_audit_appendix(signal, portfolio, scores_df, backtest,
-                                    prov_data, overall_mode, stale_warnings))   # 折叠·审计附录
+    sections.append(_layer1_decision(model.signal, model.portfolio, model.overall_mode))  # 一、本期决策
+    sections.append(_layer2_evidence(model.signal, model.portfolio))                      # 二、为什么(证据)
+    sections.append(_layer3_holdings(model.signal, model.portfolio))                      # 三、买什么·卖什么
+    sections.append(_layer4_when_change(model.signal, model.portfolio))                   # 四、何时改变
+    sections.append(_audit_appendix(model.signal, model.portfolio, model.scores_df,
+                                    model.backtest, model.prov_data, model.overall_mode,
+                                    model.stale_warnings, model.config))                  # 折叠·审计附录
 
     content = "\n\n---\n\n".join(s for s in sections if s)
 
@@ -71,37 +92,6 @@ def build_report(
 # ─────────────────────────────────────────────────────────────
 # 工具函数
 # ─────────────────────────────────────────────────────────────
-
-def _pct(v, decimals: int = 0) -> str:
-    """安全格式化百分比，None/NaN → '—'。"""
-    if v is None:
-        return "—"
-    try:
-        f = float(v)
-        if math.isnan(f):
-            return "—"
-        fmt = f"{{:+.{decimals}f}}%" if decimals > 0 else f"{{:.0f}}%"
-        return fmt.format(f)
-    except (TypeError, ValueError):
-        return "—"
-
-
-def _num(v, fmt: str = ".2f") -> str:
-    if v is None:
-        return "—"
-    try:
-        f = float(v)
-        if math.isnan(f):
-            return "—"
-        return format(f, fmt)
-    except (TypeError, ValueError):
-        return str(v)
-
-
-def _score(v) -> str:
-    """分数格式：保留1位小数，None → '—'。"""
-    return _num(v, ".1f")
-
 
 def _signal_emoji(composite: str) -> str:
     return {
@@ -139,101 +129,9 @@ def _mock_disclaimer(overall_mode: str) -> str:
     return ""
 
 
-def _key_conclusions(signal: Mapping[str, Any], portfolio: Mapping[str, Any]) -> list[str]:
-    """从结构化数据生成 3 条关键结论，确保每条都有数据支撑。"""
-    conclusions = []
-    composite = signal.get("composite_signal", "标配稳健")
-    raw = signal.get("timing_score", 5.0) or 5.0
-    cape = signal.get("cape")
-    vix = signal.get("vix")
-    trend = signal.get("trend_score")
-    credit = signal.get("credit_score")
-    macro_cycle = signal.get("macro_cycle", "")
-
-    # 结论1：估值 vs 趋势主矛盾
-    val_level = signal.get("valuation_level", "")
-    val_score = (signal.get("valuation") or {}).get("valuation_score", 5)
-    trend_score = trend or 5
-    if val_score is not None and trend_score is not None:
-        val_label = "高估" if float(val_score) < 5 else "合理"
-        trend_lbl = trend_label(trend_score)
-        cape_str = f"CAPE {_num(cape, '.1f')}" if cape else val_level
-        conclusions.append(
-            f"估值偏{val_label}（{cape_str}，估值分 {_score(val_score)}/10）与"
-            f"{trend_lbl}（趋势分 {_score(trend_score)}/10）并存——"
-            f"综合评分 {_num(raw, '.2f')}/10，触发「{composite}」信号。"
-        )
-
-    # 结论2：宏观/信用环境
-    fed_dir = signal.get("fed_direction", 0.0) or 0.0
-    fed_label = "处降息方向" if fed_dir > 0 else "处加息方向" if fed_dir < 0 else "平稳"
-    credit_str = f"信用利差分 {_score(credit)}/10" if credit else "信用利差数据缺失"
-    conclusions.append(
-        f"宏观周期「{macro_cycle}」，利率{fed_label}（方向修正 {_num(fed_dir, '+.1f')} 分）；"
-        f"{credit_str}，"
-        + ("流动性环境宽松。" if credit_loose(credit) else
-           "信用环境偏紧，需关注风险溢价上升。" if credit_tight(credit) else
-           "信用环境中性。")
-    )
-
-    # 结论3：组合建议
-    core_pct = portfolio.get("core_allocation_pct", 60)
-    sat_pct = portfolio.get("satellite_allocation_pct", 30)
-    cash_pct = portfolio.get("cash_allocation_pct", 10)
-    n_core = len(portfolio.get("core_funds", []))
-    n_sat = len(portfolio.get("satellite_funds", []))
-    vix_str = f"VIX {_num(vix, '.1f')}" if vix else ""
-    conclusions.append(
-        f"建议持仓：核心 {core_pct:.0f}%（{n_core} 只宽基）+ 卫星 {sat_pct:.0f}%（{n_sat} 只行业/主动）+ 现金 {cash_pct:.0f}%。"
-        + (f"情绪面 {vix_str} 处于中性区间，当前仓位合理。" if vix_neutral(vix) else
-           f"{vix_str} 偏高，卫星仓位已相应收缩。" if vix_elevated(vix) else "")
-    )
-
-    return conclusions[:3]
-
-
-def _trigger_conditions(signal: Mapping[str, Any], portfolio: Mapping[str, Any]) -> list[str]:
-    """生成本期最关键的加仓/减仓触发条件（可执行，非空话）。"""
-    composite = signal.get("composite_signal", "标配稳健")
-    sat_pct = portfolio.get("satellite_allocation_pct", 30)
-    cash_pct = portfolio.get("cash_allocation_pct", 10)
-    vix = signal.get("vix") or 18
-    credit = signal.get("credit_score") or 5.0
-
-    triggers = [
-        f"若 VIX 突破 30，立即将卫星仓位降至 {max(10, sat_pct - 15):.0f}%，现金提至 {min(50, cash_pct + 15):.0f}%",
-        f"若信用利差评分降至 3.5 以下（对应利差 > 5.5%），执行防守再平衡，现金仓位提至 {min(50, cash_pct + 20):.0f}%",
-    ]
-    if composite in ("重仓进取", "标配稳健"):
-        triggers.append("若综合信号从当前档位降一级（下次更新触发），于次交易日内完成仓位再平衡")
-        triggers.append(f"若推荐基金综合评分较当前下降超过 10 分，且备选池中有评分更高替代品，执行换仓")
-    else:
-        triggers.append("若综合信号升至「标配稳健」或以上，在确认信号稳定两周后逐步补仓至标准权重")
-        triggers.append("若持仓基金季度净值回撤超过 15%，评估是否触发止损换仓")
-    return triggers
-
-
 # ─────────────────────────────────────────────────────────────
 # 各章节
 # ─────────────────────────────────────────────────────────────
-
-_SEVERITY_RANK = {"high": 3, "medium": 2, "low": 1}
-
-
-def review_findings(portfolio: Mapping[str, Any]) -> tuple[str, str, list[dict]]:
-    """对抗审查的统一读取口（MD/HTML 共用，单一真相源）。
-
-    返回 ``(verdict_key, summary, findings)``；无审查或判级 sound 且无条目时
-    findings 为空。findings 按严重度降序，供「渲染前质量门」标注/前置冲突。
-    """
-    review = portfolio.get("adversarial_review") or {}
-    if not review:
-        return "", "", []
-    verdict = review.get("overall_verdict", "")
-    summary = review.get("summary", "") or ""
-    findings = list(review.get("findings") or [])
-    findings.sort(key=lambda f: _SEVERITY_RANK.get(f.get("severity"), 0), reverse=True)
-    return verdict, summary, findings
 
 
 def review_banner(portfolio: Mapping[str, Any]) -> str:
@@ -585,13 +483,13 @@ _条目由{src}生成，基于当期量化信号（综合评分 {_num(raw, '.2f'
 def _audit_appendix(signal: Mapping[str, Any], portfolio: Mapping[str, Any],
                     scores_df: Optional[pd.DataFrame], backtest: Optional[Mapping[str, Any]],
                     prov_data: Mapping[str, Any], overall_mode: str,
-                    stale_warnings: list[str]) -> str:
+                    stale_warnings: list[str], cfg: Mapping[str, Any]) -> str:
     """折叠的审计附录:数据可信度 / 备选池 / 回测 / 算法参数 / QDII通用风险 / 对抗审查全文。"""
     parts = [
         _demote_header(_s2_data_quality(prov_data, overall_mode, stale_warnings)),
         _demote_header(_s6_alternates(portfolio, signal)),
         _demote_header(_s9_backtest(backtest, signal)),
-        _algo_params_md(signal),
+        _algo_params_md(signal, cfg),
         "### QDII 通用风险\n\n" + "\n".join(f"- {r}" for r in _QDII_GENERIC_RISKS),
         _adversarial_findings_table(portfolio),
     ]
@@ -641,49 +539,7 @@ def _s2_data_quality(prov_data: Mapping[str, Any], overall_mode: str, stale_warn
     return "\n".join(rows)
 
 
-# ── 市场主线的子口径（MD/HTML 共用，单一真相源）────────────────
-
-def primary_contradiction(signal: Mapping[str, Any]) -> str:
-    """当前主要矛盾：优先 AI Phase 1，否则规则层四分支推断。"""
-    val = signal.get("valuation", {})
-    val_score = val.get("valuation_score", 5)
-    trend_score = signal.get("trend_score", 5)
-    ai_analysis = signal.get("ai_analysis")
-    if ai_analysis and ai_analysis.get("primary_contradiction"):
-        return ai_analysis["primary_contradiction"]
-    val_high = float(val_score or 5) < 5
-    is_trend_strong = trend_strong(trend_score if trend_score is not None else 5)
-    if val_high and is_trend_strong:
-        return f"高估值（CAPE {_num(signal.get('cape'), '.1f')}，估值分 {_score(val_score)}/10）vs 强趋势（趋势分 {_score(trend_score)}/10）——动量暂时压过估值压力"
-    elif val_high:
-        return f"高估值压力（CAPE {_num(signal.get('cape'), '.1f')}，估值分 {_score(val_score)}/10）与偏弱的趋势信号并存——谨慎防御"
-    elif is_trend_strong:
-        return f"估值合理（估值分 {_score(val_score)}/10）+ 强趋势（趋势分 {_score(trend_score)}/10）——进攻型信号"
-    else:
-        return f"估值与趋势均处中性（估值分 {_score(val_score)}/10，趋势分 {_score(trend_score)}/10）——标配均衡"
-
-
-def market_narrative(signal: Mapping[str, Any]) -> tuple[str, str]:
-    """市场叙事文本与来源标注（AI 增强 / 规则层）。"""
-    ai_analysis = signal.get("ai_analysis")
-    if ai_analysis and ai_analysis.get("market_narrative"):
-        return ai_analysis["market_narrative"], "（AI 增强）"
-    narrative = signal.get("narrative", {})
-    insights = narrative.get("insights", []) if isinstance(narrative, dict) else []
-    text = "\n\n".join(insights[:3]) if insights else "（暂无叙事分析）"
-    return text, "（规则层）"
-
-
-def alloc_logic_text(signal: Mapping[str, Any]) -> str:
-    """仓位推导逻辑：按综合信号档位给出一句话解释。"""
-    composite = signal.get("composite_signal", "标配稳健")
-    raw = signal.get("timing_score", 5.0) or 5.0
-    return {
-        "重仓进取": f"综合评分 {_num(raw, '.2f')}/10 ≥ 7.0，信号积极，风险资产占比提至上限",
-        "标配稳健": f"综合评分 {_num(raw, '.2f')}/10 在 5.0–7.0 区间，维持均衡配置",
-        "谨慎防守": f"综合评分 {_num(raw, '.2f')}/10 在 3.0–5.0 区间，降低风险敞口，提高现金",
-        "减仓防守": f"综合评分 {_num(raw, '.2f')}/10 < 3.0，大幅减仓，保留流动性应对下行风险",
-    }.get(composite, f"综合评分 {_num(raw, '.2f')}/10")
+# ── 市场主线的子口径已上移至 report_model（MD/HTML 共用单一真相源） ──
 
 
 def _factor_table_md(signal: Mapping[str, Any]) -> str:
@@ -796,32 +652,6 @@ def _s3_market_theme(signal: Mapping[str, Any]) -> str:
 {narrative_text}{gm_block}"""
 
 
-def _snapshot_change_note(portfolio: Mapping[str, Any]) -> str:
-    from pathlib import Path
-    import json
-    snap_path = Path(__file__).parent.parent.parent / "data" / "portfolio_snapshot.json"
-    try:
-        if not snap_path.exists():
-            return "_（首次运行，无历史快照可比较）_"
-        raw = json.loads(snap_path.read_text(encoding="utf-8"))
-        prev_core = set(raw.get("core", {}).keys())
-        prev_sat = set(raw.get("satellite", {}).keys())
-        cur_core = {f["fund_code"] for f in portfolio.get("core_funds", [])}
-        cur_sat = {f["fund_code"] for f in portfolio.get("satellite_funds", [])}
-        added = (cur_core | cur_sat) - (prev_core | prev_sat)
-        removed = (prev_core | prev_sat) - (cur_core | cur_sat)
-        if not added and not removed:
-            return "_本期持仓与上期相同，未发生换仓。_"
-        lines = ["**换仓变动：**"]
-        if added:
-            lines.append(f"- 新增：{', '.join(sorted(added))}")
-        if removed:
-            lines.append(f"- 移除：{', '.join(sorted(removed))}")
-        return "\n".join(lines)
-    except Exception:
-        return ""
-
-
 def _fund_row(f: dict, rationale_map: dict) -> str:
     code = str(f.get("fund_code", ""))
     name = f.get("fund_name", code)
@@ -907,29 +737,6 @@ def _s6_alternates(portfolio: Mapping[str, Any], signal: Mapping[str, Any]) -> s
     return "\n".join(rows)
 
 
-def region_exposure(all_funds: list) -> dict[str, list[str]]:
-    """按基金名称关键词归类区域暴露（MD/HTML 共用，单一真相源）。
-    值为 ``名称(权重%)`` 字符串列表，保持插入顺序。"""
-    region_keywords = {
-        "美国/北美": ["标普", "S&P", "纳斯达克", "美国", "SP", "US", "America"],
-        "全球发达市场": ["全球", "MSCI", "世界", "Global", "QDII"],
-        "亚太/新兴市场": ["亚太", "亚洲", "新兴", "中国", "港", "日本", "印度"],
-        "行业/主题": ["科技", "医疗", "能源", "消费", "地产", "半导体", "AI"],
-    }
-    exposure: dict[str, list[str]] = {}
-    for f in all_funds:
-        name = f.get("fund_name", "")
-        matched = False
-        for region, keywords in region_keywords.items():
-            if any(kw in name for kw in keywords):
-                exposure.setdefault(region, []).append(f"{name}({f.get('weight', 0):.0f}%)")
-                matched = True
-                break
-        if not matched:
-            exposure.setdefault("其他", []).append(f"{name}({f.get('weight', 0):.0f}%)")
-    return exposure
-
-
 def _s7_exposure_risk(portfolio: Mapping[str, Any], signal: Mapping[str, Any]) -> str:
     core_funds = portfolio.get("core_funds", [])
     sat_funds = portfolio.get("satellite_funds", [])
@@ -1002,27 +809,6 @@ def _s7_exposure_risk(portfolio: Mapping[str, Any], signal: Mapping[str, Any]) -
 ### QDII 特有风险
 
 {qdii_risks_md}"""
-
-
-def rule_action_items(signal: Mapping[str, Any], portfolio: Mapping[str, Any]) -> list[str]:
-    """规则层行动条目（无 AI 时的 fallback；MD/HTML 共用，单一真相源）。"""
-    composite = signal.get("composite_signal", "标配稳健")
-    core_pct = portfolio.get("core_allocation_pct", 60)
-    trend_score = signal.get("trend_score") or 5.0
-
-    plan_items = _trigger_conditions(signal, portfolio)
-
-    # 额外规则层动作
-    if composite == "重仓进取":
-        if trend_strong(trend_score):
-            plan_items.append(f"趋势分持续 ≥ {TREND_STRONG:g} 且 VIX 保持 < 20，可将核心仓位上限从 {core_pct:.0f}% 提至 {min(80, core_pct+10):.0f}%")
-    elif composite in ("谨慎防守", "减仓防守"):
-        plan_items.append(f"若 SP500 连续 3 个月回撤超过 10%，考虑分批补仓核心指数 ETF（等权买持）")
-
-    # 换仓门槛
-    plan_items.append("若持仓基金综合评分低于 45 且备选池中有 > 55 分候选，于下次月度评分后执行替换")
-    plan_items.append("每季度末重新运行评分，若信号档位不变且持仓无重大事件，维持现有组合")
-    return plan_items
 
 
 def _s9_backtest(backtest: Optional[Mapping[str, Any]], signal: Mapping[str, Any]) -> str:
@@ -1174,19 +960,8 @@ def _s9_backtest(backtest: Optional[Mapping[str, Any]], signal: Mapping[str, Any
 > 回测结论仅供参考，不构成投资建议。历史绩效不代表未来表现。"""
 
 
-_VERDICT_LABEL = {
-    "sound": "🟢 未发现实质问题",
-    "minor_concerns": "🟡 有需注意的小瑕疵",
-    "material_concerns": "🔴 存在实质问题，使用前请人工复核",
-}
 _SEVERITY_EMOJI = {"high": "🔴", "medium": "🟡", "low": "⚪"}
-_CATEGORY_CN = {
-    "data_contradiction": "与数据矛盾",
-    "unsupported_claim": "无依据断言",
-    "overstated_conviction": "过度自信",
-    "missing_risk": "遗漏风险",
-    "internal_inconsistency": "自相矛盾",
-}
+# _VERDICT_LABEL / _CATEGORY_CN 已上移至 report_model（MD/HTML 共用单一真相源），上方已 import。
 
 
 def _s11_adversarial_review(portfolio: Mapping[str, Any]) -> str:
@@ -1227,10 +1002,11 @@ def _s11_adversarial_review(portfolio: Mapping[str, Any]) -> str:
     return head + "\n".join(rows)
 
 
-def _algo_params_md(signal: Mapping[str, Any]) -> str:
-    """算法参数与当期原始指标（收进折叠审计附录）。"""
-    from ..utils.config import load_config
-    cfg = load_config()
+def _algo_params_md(signal: Mapping[str, Any], cfg: Mapping[str, Any]) -> str:
+    """算法参数与当期原始指标（收进折叠审计附录）。
+
+    cfg 由入口适配器经 ReportModel 传入，渲染过程不再自读配置文件。
+    """
     weights = cfg.get("scoring_weights", {})
     vp = cfg.get("strategy_params", {}).get("valuation_thresholds", {})
 
@@ -1261,12 +1037,9 @@ def _algo_params_md(signal: Mapping[str, Any]) -> str:
         f"| 跨期一致性 | {weights.get('consistency', 0.10)*100:.0f}% |",
     ]
 
-    # 信号阈值
-    threshold_rows = [
-        "| 综合评分 ≥ 7.0 | 重仓进取：核心70%/卫星25%/现金5% |",
-        "| 综合评分 5.0–7.0 | 标配稳健：核心60%/卫星30%/现金10% |",
-        "| 综合评分 3.0–5.0 | 谨慎防守：核心50%/卫星20%/现金30% |",
-        "| 综合评分 < 3.0 | 减仓防守：核心35%/卫星15%/现金50% |",
+    # 信号阈值（仓位档位取自 POSITION_TIERS 单一真相源，MD/HTML 共用）
+    threshold_rows = [f"| {cond} | {desc} |" for cond, desc in signal_threshold_rows()]
+    threshold_rows += [
         f"| CAPE 高估线 | {vp.get('cape_overvalued', 30)} |",
         f"| CAPE 低估线 | {vp.get('cape_undervalued', 15)} |",
     ]

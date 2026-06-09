@@ -12,23 +12,23 @@ from ..domain.scoring import category_percentile, consistency_score, cost_score
 
 
 def score_all_funds(market_signal: Mapping[str, Any]) -> pd.DataFrame:
+    """适配器：读取数据库与配置 → 调纯函数 score_funds → 写回 fund_scores。"""
     cfg = load_config()
-    weights = cfg.get("scoring_weights", {})
-    w_perf    = weights.get("performance",    0.30)
-    w_risk    = weights.get("risk_adjusted",  0.25)
-    w_strategy = weights.get("strategy_match", 0.20)
-    w_cost    = weights.get("cost_efficiency", 0.15)
-    w_consist = weights.get("consistency",    0.10)
-
-    funds   = read_table("fund_list")
+    funds = read_table("fund_list")
     perf_df = read_table("fund_performance")
     if funds.empty:
         return pd.DataFrame()
 
-    merged = (funds.merge(perf_df, on="fund_code", how="left")
-              if not perf_df.empty else funds.copy())
+    holdings_map = _load_holdings_map()
 
-    # 加载持仓数据（best-effort）：fund_holdings 按基金取最新一条
+    df_out = score_funds(funds, perf_df, holdings_map, market_signal, cfg)
+    if not df_out.empty:
+        upsert_dataframe(df_out, "fund_scores", ["fund_code"])
+    return df_out
+
+
+def _load_holdings_map() -> dict[str, dict]:
+    """加载持仓数据（best-effort，IO 边界）：fund_holdings 按基金取最新一条。"""
     holdings_map: dict[str, dict] = {}
     try:
         holdings_df = read_table("fund_holdings")
@@ -50,6 +50,35 @@ def score_all_funds(market_signal: Mapping[str, Any]) -> pd.DataFrame:
         # 持仓数据加载失败会让所有基金的 strategy_match 退化为无持仓口径，
         # 评分系统性偏移，必须可见（仍以空 map 继续，不阻断主流程）。
         print(f"[WARN] 持仓数据加载失败，strategy_match 将以无持仓口径评分: {e}")
+    return holdings_map
+
+
+def score_funds(
+    funds: pd.DataFrame,
+    performance: pd.DataFrame,
+    holdings: Mapping[str, dict],
+    market_signal: Mapping[str, Any],
+    config: dict[str, Any],
+) -> pd.DataFrame:
+    """纯函数：由内存中的基金/绩效/持仓 + 市场信号 + 配置，算出评分表。
+
+    **不读库、不写库、不读配置文件、不打印**——可脱离 SQLite 用内存数据直接测试。
+    `holdings` 为 {fund_code: {stock_ratio, bond_ratio, cash_ratio}}（适配器预加载）。
+    返回按 total_score 降序的 DataFrame；持久化由适配器 score_all_funds 负责。
+    """
+    weights = config.get("scoring_weights", {})
+    w_perf    = weights.get("performance",    0.30)
+    w_risk    = weights.get("risk_adjusted",  0.25)
+    w_strategy = weights.get("strategy_match", 0.20)
+    w_cost    = weights.get("cost_efficiency", 0.15)
+    w_consist = weights.get("consistency",    0.10)
+
+    if funds.empty:
+        return pd.DataFrame()
+
+    merged = (funds.merge(performance, on="fund_code", how="left")
+              if not performance.empty else funds.copy())
+    holdings_map = holdings
 
     # ── Pass 1: 计算所有基金的原始指标 ────────────────────────────
     raw_rows = []
@@ -116,7 +145,7 @@ def score_all_funds(market_signal: Mapping[str, Any]) -> pd.DataFrame:
             row["asset_class"], composite,
             h.get("stock_ratio"), h.get("bond_ratio"), h.get("cash_ratio"),
         )
-        cost_score_val = cost_score(row["expense_ratio"], cfg)
+        cost_score_val = cost_score(row["expense_ratio"], config)
         consist_score  = consistency_score([row["ann_1y"], row["ann_3y"], row["ann_6m"]])
 
         total = (
@@ -141,9 +170,7 @@ def score_all_funds(market_signal: Mapping[str, Any]) -> pd.DataFrame:
             "recommendation":    recommendation,
         })
 
-    df_out = pd.DataFrame(results).sort_values("total_score", ascending=False)
-    upsert_dataframe(df_out, "fund_scores", ["fund_code"])
-    return df_out
+    return pd.DataFrame(results).sort_values("total_score", ascending=False)
 
 
 # ── 工具函数 ──────────────────────────────────────────────────────

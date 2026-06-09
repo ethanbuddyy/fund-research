@@ -4,30 +4,28 @@
 与历史高水位比较得出回撤幅度。回撤超过配置阈值时返回 triggered=True，
 供 update_pipeline 强制将信号调至"减仓防守"。
 
-数据文件：
-  data/portfolio_snapshot.json  — 上次推荐持仓（portfolio.py 写入）
-  data/portfolio_nav.json       — 累计净值 + 高水位（本模块维护）
+状态读写统一走 portfolio_state_store（唯一真相源），本模块不再自行拼接路径：
+  上期快照由编排层显式传入（previous_portfolio），净值/高水位经 store 读写。
 """
-import json
-from datetime import datetime
-from pathlib import Path
-
-_SNAPSHOT_PATH = Path(__file__).parent.parent.parent / "data" / "portfolio_snapshot.json"
-_NAV_PATH = Path(__file__).parent.parent.parent / "data" / "portfolio_nav.json"
+from .portfolio_state_store import load_nav_state, save_nav_state, load_previous_portfolio
+from ..domain.types import StopLossResult
 
 
-def update_and_check(stop_loss_pct: float = 0.15) -> dict:
+def update_and_check(stop_loss_pct: float = 0.15,
+                     previous_portfolio: dict | None = None) -> StopLossResult:
     """计算组合浮亏状态，返回止损检测结果。
 
     Args:
         stop_loss_pct: 止损阈值（小数），如 0.15 表示回撤超 15% 触发
+        previous_portfolio: 上期推荐组合快照原文（编排层一次性读入并显式传入）。
+            为 None 时退回经 store 自行读取一次，兼容独立调用。
 
     Returns:
-        {triggered, portfolio_nav, high_water_mark, drawdown_pct,
-         threshold_pct, period_return_pct, funds_tracked, note}
+        StopLossResult（triggered/portfolio_nav/high_water_mark/drawdown_pct/
+        threshold_pct/period_return_pct/funds_tracked/note）。
     """
     threshold = -abs(stop_loss_pct * 100)
-    base = {
+    base: StopLossResult = {
         "triggered": False,
         "portfolio_nav": 100.0,
         "high_water_mark": 100.0,
@@ -38,9 +36,10 @@ def update_and_check(stop_loss_pct: float = 0.15) -> dict:
         "note": "",
     }
 
-    snapshot = _load_snapshot()
+    snapshot = previous_portfolio if previous_portfolio is not None else load_previous_portfolio()
     if snapshot is None:
-        return {**base, "note": "首次运行，无历史快照，止损追踪将从下次运行开始"}
+        base["note"] = "首次运行，无历史快照，止损追踪将从下次运行开始"
+        return base
 
     # 提取上次持仓的权重（pct）和基准净值
     all_funds: dict[str, dict] = {}
@@ -54,13 +53,15 @@ def update_and_check(stop_loss_pct: float = 0.15) -> dict:
                 all_funds[code] = {"weight": weight_pct / 100.0, "prev_nav": float(prev_nav)}
 
     if not all_funds:
-        return {**base, "note": "快照中无权重/净值信息（旧格式），止损追踪将从下次运行开始"}
+        base["note"] = "快照中无权重/净值信息（旧格式），止损追踪将从下次运行开始"
+        return base
 
     # 查询各基金最新净值，计算本期收益
     fund_returns = _query_period_returns(all_funds)
 
     if not fund_returns:
-        return {**base, "note": "无法从数据库获取基金最新净值，跳过本次止损检测"}
+        base["note"] = "无法从数据库获取基金最新净值，跳过本次止损检测"
+        return base
 
     # 加权本期收益（仅统计有净值数据的基金，按权重归一化）
     total_weight = sum(all_funds[c]["weight"] for c in fund_returns)
@@ -70,12 +71,12 @@ def update_and_check(stop_loss_pct: float = 0.15) -> dict:
     )
 
     # 更新累计净值和高水位
-    nav_data = _load_nav_data()
+    nav_data = load_nav_state()
     new_nav = nav_data["nav"] * (1.0 + weighted_return)
     new_hwm = max(nav_data["hwm"], new_nav)
     drawdown = (new_nav / new_hwm - 1.0) * 100.0 if new_hwm > 0 else 0.0
 
-    _save_nav_data(new_nav, new_hwm)
+    save_nav_state(new_nav, new_hwm)
 
     triggered = drawdown < threshold
     note = (
@@ -100,61 +101,13 @@ def update_and_check(stop_loss_pct: float = 0.15) -> dict:
 
 
 def _query_period_returns(all_funds: dict) -> dict[str, float]:
-    """查询各基金最新净值，计算相对上次快照净值的变化率。"""
-    try:
-        from .database import get_connection
-        conn = get_connection()
-        try:
-            returns = {}
-            for code, info in all_funds.items():
-                prev_nav = info["prev_nav"]
-                row = conn.execute(
-                    "SELECT nav FROM fund_nav_history WHERE fund_code=? ORDER BY date DESC LIMIT 1",
-                    (code,),
-                ).fetchone()
-                if row and row[0] is not None and float(row[0]) > 0 and prev_nav > 0:
-                    returns[code] = float(row[0]) / prev_nav - 1.0
-            return returns
-        finally:
-            conn.close()  # 异常路径也要关连接
-    except Exception:
-        return {}
-
-
-def _load_snapshot() -> dict | None:
-    if not _SNAPSHOT_PATH.exists():
-        return None  # 首次运行属正常，不告警
-    try:
-        return json.loads(_SNAPSHOT_PATH.read_text(encoding="utf-8"))
-    except Exception as e:
-        # 文件存在却读不出 = 损坏，止损追踪会从空基准重来，必须可见。
-        print(f"[WARN] 组合快照损坏，止损追踪将重置基准: {e}")
-        return None
-
-
-def _load_nav_data() -> dict:
-    if not _NAV_PATH.exists():
-        return {"nav": 100.0, "hwm": 100.0}  # 首次运行属正常
-    try:
-        data = json.loads(_NAV_PATH.read_text(encoding="utf-8"))
-        return {"nav": float(data.get("nav", 100.0)), "hwm": float(data.get("hwm", 100.0))}
-    except Exception as e:
-        # 文件存在却读不出 = 损坏，回撤会从默认基准重算，必须可见。
-        print(f"[WARN] 止损净值数据损坏，回撤基准重置为 100: {e}")
-        return {"nav": 100.0, "hwm": 100.0}
-
-
-def _save_nav_data(nav: float, hwm: float):
-    try:
-        _NAV_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _NAV_PATH.write_text(
-            json.dumps(
-                {"nav": round(nav, 6), "hwm": round(hwm, 6),
-                 "updated": datetime.now().strftime("%Y-%m-%d")},
-                ensure_ascii=False,
-            ),
-            encoding="utf-8",
-        )
-    except Exception as e:
-        # 净值/高水位持久化失败会让下次回撤计算从错误基准重新开始，必须可见。
-        print(f"[WARN] 止损净值数据保存失败（将影响下次回撤计算基准）: {e}")
+    """查询各基金最新净值（经 FundRepository），计算相对上次快照净值的变化率。"""
+    from .fund_repository import get_latest_navs
+    nav_map = get_latest_navs(all_funds.keys())
+    returns = {}
+    for code, info in all_funds.items():
+        prev_nav = info["prev_nav"]
+        latest = nav_map.get(code)
+        if latest is not None and latest > 0 and prev_nav > 0:
+            returns[code] = latest / prev_nav - 1.0
+    return returns

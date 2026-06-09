@@ -144,7 +144,6 @@ class TestBuildPortfolioReal:
                             lambda: {"rebalancing": {"score_threshold": 10},
                                      "ai_analysis": {"enabled": False}})
         monkeypatch.setattr(portfolio, "_get_latest_navs", lambda codes: {})
-        monkeypatch.setattr(portfolio, "_SNAPSHOT_PATH", tmp_path / "snap.json")
         return portfolio
 
     def test_allocation_reflects_signal(self, monkeypatch, tmp_path):
@@ -358,6 +357,17 @@ class TestStopLossOrderingInvariant:
                 "triggered": triggered, "drawdown_pct": 20.0,
                 "portfolio_nav": 0.80, "high_water_mark": 1.00,
             },
+        )
+        # 状态读写打桩：上期快照读为空、本期信号/快照落盘 no-op，
+        # 把断言聚焦在「读上期 → 止损覆盖 → 构建」这段真实代码路径上。
+        monkeypatch.setattr(
+            "src.utils.portfolio_state_store.load_previous_portfolio", lambda *a, **k: None
+        )
+        monkeypatch.setattr(
+            "src.utils.portfolio_state_store.save_current_portfolio", lambda *a, **k: None
+        )
+        monkeypatch.setattr(
+            "src.recommender.signals.save_market_signal", lambda *a, **k: None
         )
 
         # build spy：捕获被调用「当刻」所见的 signal 仓位（关键断言对象）
