@@ -11,6 +11,7 @@
 设计：纯规则核心（解析/过滤/去重/排序）只依赖 stdlib + fund_universe，可离线单测；
 网络抓取与落库为惰性导入，失败时返回空列表，由调用方回退到现有核心池。
 """
+from typing import Optional
 import re
 from datetime import datetime
 from ..utils.fund_universe import (
@@ -41,7 +42,7 @@ _DEFAULTS = {
 
 # ── 对外主入口 ──────────────────────────────────────────
 
-def screen_funds(cfg: dict = None) -> list:
+def screen_funds(cfg: Optional[dict] = None) -> list:
     """返回筛选后的基金池 list[dict]；禁用/抓取失败/requests缺失时返回 []（调用方回退）。"""
     from ..utils.config import load_config
     full = cfg or load_config()
@@ -165,7 +166,7 @@ def apply_filters(cands: list, sc: dict, today) -> list:
 def classify_and_dedup(cands: list, sc: dict) -> list:
     """分类 → 按基准去重保留最优 → 排序 → 池上限。"""
     rank_key = {"return_1y": "return_1y", "return_3y": "return_3y",
-                "return_since": "return_since"}.get(sc.get("rank_by"), "return_since")
+                "return_since": "return_since"}.get(str(sc.get("rank_by") or ""), "return_since")
     keep_n = max(1, int(sc.get("per_benchmark_keep", 2)))
     cap = int(sc.get("max_pool_size", 30))
 
@@ -190,13 +191,13 @@ def classify_and_dedup(cands: list, sc: dict) -> list:
         return (r if r is not None else -1e9, -(fee if fee is not None else 1e9))
 
     # ① 先按"基名"合并同一基金的不同份额类别(A/C、人民币/美元现汇)，每只基金只留最优份额
-    by_fund = {}
+    by_fund: dict = {}
     for c in enriched:
         by_fund.setdefault(_normalize_base(c["fund_name"]), []).append(c)
     one_per_fund = [sorted(items, key=sort_key, reverse=True)[0] for items in by_fund.values()]
 
     # ② 再按基准去重：标准指数每个基准保留最优 keep_n 只（不同提供商），其余每基金即一组
-    groups = {}
+    groups: dict = {}
     for c in one_per_fund:
         groups.setdefault(_dedup_key(c["benchmark"], c["fund_name"]), []).append(c)
     deduped = []

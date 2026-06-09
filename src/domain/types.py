@@ -69,3 +69,4 @@ class PortfolioRecommendation(TypedDict, total=False):
     top_picks: list[dict[str, Any]]
     investment_notes: list[str]
     ai_decision: dict[str, Any]      # 仅 AI 阶段二开启且 phase1 成功时存在
+    adversarial_review: Optional[dict[str, Any]]  # 仅 Phase3 对抗审查开启且有结果时存在

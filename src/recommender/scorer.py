@@ -1,4 +1,6 @@
 """基金综合评分引擎"""
+from typing import Any
+from collections.abc import Mapping
 import pandas as pd
 import numpy as np
 from ..utils.database import read_table, upsert_dataframe
@@ -9,7 +11,7 @@ from ..utils.fund_universe import (
 from ..domain.scoring import category_percentile, consistency_score, cost_score
 
 
-def score_all_funds(market_signal: dict) -> pd.DataFrame:
+def score_all_funds(market_signal: Mapping[str, Any]) -> pd.DataFrame:
     cfg = load_config()
     weights = cfg.get("scoring_weights", {})
     w_perf    = weights.get("performance",    0.30)
@@ -154,7 +156,7 @@ def _annualize(cum_return_pct: float, years: float) -> float:
     return (growth ** (1.0 / years) - 1) * 100.0
 
 
-def _generate_signal(score: float, market_signal: dict) -> tuple[str, str]:
+def _generate_signal(score: float, market_signal: Mapping[str, Any]) -> tuple[str, str]:
     composite = market_signal.get("composite_signal", "标配稳健")
 
     if score >= 75:

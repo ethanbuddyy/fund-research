@@ -1,4 +1,6 @@
 """Phase 1: Market Context Analyzer — 市场解析阶段"""
+from typing import Any
+from collections.abc import Mapping
 import traceback
 from .backend import call_with_tools
 from .schemas import PHASE1_TOOL
@@ -30,7 +32,7 @@ market_narrative 写作要求（必须遵守）：
 """
 
 
-def _format_signal_data(signal: dict) -> str:
+def _format_signal_data(signal: Mapping[str, Any]) -> str:
     macro = signal.get("macro", {})
     val = signal.get("valuation", {})
     sent = signal.get("sentiment", {})
@@ -134,7 +136,7 @@ class MarketContextAnalyzer:
         self.model = cfg.get("phase1_model", "claude-sonnet-4-6")
         self.max_tokens = 4000
 
-    def analyze(self, market_signal: dict) -> dict | None:
+    def analyze(self, market_signal: Mapping[str, Any]) -> dict | None:
         try:
             return call_with_tools(
                 system=_SYSTEM_ROLE,

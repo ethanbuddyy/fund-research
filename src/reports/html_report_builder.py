@@ -5,11 +5,12 @@
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 import html
 import math
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import pandas as pd
 
@@ -369,7 +370,7 @@ tbody td {
 # 主渲染函数
 # ─────────────────────────────────────────────────────────────
 
-def _render(signal: dict, portfolio: dict,
+def _render(signal: Mapping[str, Any], portfolio: Mapping[str, Any],
             scores_df: Optional[pd.DataFrame],
             backtest: Optional[dict],
             date_str: str) -> str:
@@ -474,7 +475,7 @@ def _header(signal, portfolio, composite, sig_cls, raw_score,
 <div class="main">{disclaimer}</div>"""
 
 
-def _section_conclusion(signal: dict, portfolio: dict) -> str:
+def _section_conclusion(signal: Mapping[str, Any], portfolio: Mapping[str, Any]) -> str:
     """首页结论：关键结论 + 本期最重要触发条件（与 MD 第一章同源）。"""
     conclusions = _key_conclusions(signal, portfolio)
     triggers = _trigger_conditions(signal, portfolio)
@@ -506,7 +507,7 @@ def _section_conclusion(signal: dict, portfolio: dict) -> str:
 </div>"""
 
 
-def _section_data_quality(prov_data: dict, overall_mode: str) -> str:
+def _section_data_quality(prov_data: Mapping[str, Any], overall_mode: str) -> str:
     items = []
     src_labels = {"macro": "宏观数据", "market": "市场数据",
                   "fund": "基金净值", "valuation": "估值数据", "news": "新闻情绪"}
@@ -574,7 +575,7 @@ def _section_data_quality(prov_data: dict, overall_mode: str) -> str:
 </div>"""
 
 
-def _section_market(signal: dict, composite: str, raw_score: float) -> str:
+def _section_market(signal: Mapping[str, Any], composite: str, raw_score: float) -> str:
     macro_adj    = signal.get("macro_adj") or signal.get("macro", {}).get("cycle_score", 5) or 5
     val_score    = (signal.get("valuation") or {}).get("valuation_score", 5) or 5
     trend_score  = signal.get("trend_score") or 5
@@ -641,7 +642,7 @@ def _section_market(signal: dict, composite: str, raw_score: float) -> str:
 </div>"""
 
 
-def _section_allocation(portfolio: dict, core_pct, sat_pct, cash_pct) -> str:
+def _section_allocation(portfolio: Mapping[str, Any], core_pct, sat_pct, cash_pct) -> str:
     notes = portfolio.get("investment_notes") or []
     notes_html = "".join(f'<li style="margin-bottom:6px;">{_e(n)}</li>' for n in notes[:5])
 
@@ -664,7 +665,7 @@ def _section_allocation(portfolio: dict, core_pct, sat_pct, cash_pct) -> str:
 </div>"""
 
 
-def _section_funds(portfolio: dict) -> str:
+def _section_funds(portfolio: Mapping[str, Any]) -> str:
     core   = portfolio.get("core_funds", [])
     sat    = portfolio.get("satellite_funds", [])
     all_f  = core + sat
@@ -752,7 +753,7 @@ def _section_funds(portfolio: dict) -> str:
 </div>"""
 
 
-def _section_alternates(portfolio: dict) -> str:
+def _section_alternates(portfolio: Mapping[str, Any]) -> str:
     top   = portfolio.get("top_picks") or []
     sel   = {str(f["fund_code"]) for f in
              portfolio.get("core_funds", []) + portfolio.get("satellite_funds", [])}
@@ -800,7 +801,7 @@ def _section_alternates(portfolio: dict) -> str:
 </div>"""
 
 
-def _section_risk(portfolio: dict, signal: dict) -> str:
+def _section_risk(portfolio: Mapping[str, Any], signal: Mapping[str, Any]) -> str:
     vix = signal.get("vix") or 18
     credit = signal.get("credit_score") or 5
     all_f = portfolio.get("core_funds", []) + portfolio.get("satellite_funds", [])
@@ -859,7 +860,7 @@ def _section_risk(portfolio: dict, signal: dict) -> str:
 </div>"""
 
 
-def _section_action(signal: dict, portfolio: dict) -> str:
+def _section_action(signal: Mapping[str, Any], portfolio: Mapping[str, Any]) -> str:
     ai_dec = portfolio.get("ai_decision") or {}
     notes  = ai_dec.get("position_sizing_notes") or []
     trigs  = ai_dec.get("rebalance_triggers") or []
@@ -929,7 +930,7 @@ def _section_action(signal: dict, portfolio: dict) -> str:
 </div>"""
 
 
-def _section_scenario(portfolio: dict) -> str:
+def _section_scenario(portfolio: Mapping[str, Any]) -> str:
     ai_dec = portfolio.get("ai_decision") or {}
     sc     = ai_dec.get("scenario_analysis") or {}
     if not any([sc.get("bull_case"), sc.get("base_case"), sc.get("bear_case")]):
@@ -962,7 +963,7 @@ def _section_scenario(portfolio: dict) -> str:
 </div>"""
 
 
-def _section_global_macro(signal: dict) -> str:
+def _section_global_macro(signal: Mapping[str, Any]) -> str:
     gm = signal.get("global_macro") or {}
     if not gm.get("available") or not gm.get("regions"):
         return ""
@@ -1028,7 +1029,7 @@ _CAT_CN_HTML = {
 }
 
 
-def _section_adversarial(portfolio: dict) -> str:
+def _section_adversarial(portfolio: Mapping[str, Any]) -> str:
     """AI 对抗审查结论（仅启用并有结果时渲染，否则空串）。所有动态文本均转义。"""
     review = portfolio.get("adversarial_review")
     if not review:
@@ -1235,7 +1236,7 @@ def _section_backtest(backtest: Optional[dict]) -> str:
 </div>"""
 
 
-def _section_appendix(signal: dict) -> str:
+def _section_appendix(signal: Mapping[str, Any]) -> str:
     """附录：数据源 / 评分权重 / 信号阈值 / 当期关键原始指标（与 MD 第十章同源）。"""
     try:
         from ..utils.config import load_config

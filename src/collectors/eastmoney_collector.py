@@ -13,6 +13,7 @@
 
 非官方接口，东财改版可能导致字段变动；所有解析独立容错，失败即跳过。
 """
+from typing import Any, Optional
 import re
 import json
 from datetime import datetime, timezone, timedelta
@@ -27,7 +28,7 @@ _HEADERS = {
 }
 
 
-def collect_eastmoney(fund_codes: list = None) -> dict:
+def collect_eastmoney(fund_codes: Optional[list] = None) -> dict:
     """抓取各基金 pingzhongdata，富集真实净值与持仓。返回汇总统计。"""
     try:
         import requests
@@ -155,7 +156,7 @@ def _parse_nav(js: str, code: str) -> list:
 
 def _parse_holdings(js: str, code: str) -> dict | None:
     """返回 {fund_code, date, stock_ratio, bond_ratio, cash_ratio, stock_codes, managers}。"""
-    out = {"fund_code": code, "date": None, "stock_ratio": None,
+    out: dict[str, Any] = {"fund_code": code, "date": None, "stock_ratio": None,
            "bond_ratio": None, "cash_ratio": None, "stock_codes": None, "managers": None}
     got = False
 

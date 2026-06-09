@@ -45,15 +45,15 @@ def search_funds(query: str) -> list[dict]:
     # ── 2. 从 CORE_QDII_FUNDS 静态库补充 ─────────────────────
     q_lower = query.lower()
     for f in CORE_QDII_FUNDS:
-        code  = f["fund_code"]
-        name  = f["fund_name"]
-        bench = f.get("benchmark", "")
+        code  = str(f["fund_code"])
+        name  = str(f["fund_name"])
+        bench = str(f.get("benchmark", ""))
         if code in seen:
             continue
         if (query == code
                 or q_lower in name.lower()
                 or q_lower in bench.lower()
-                or q_lower in f.get("region", "").lower()):
+                or q_lower in str(f.get("region", "")).lower()):
             results.append({
                 "fund_code":  code,
                 "fund_name":  name,

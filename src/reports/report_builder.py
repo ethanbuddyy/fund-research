@@ -12,9 +12,10 @@ from __future__ import annotations
 
 import math
 import os
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import pandas as pd
 
@@ -34,7 +35,7 @@ def build_report(
     signal: MarketSignal,
     portfolio: PortfolioRecommendation,
     scores_df: Optional[pd.DataFrame] = None,
-    backtest: Optional[dict] = None,
+    backtest: Optional[Mapping[str, Any]] = None,
     output_dir: str | Path = "reports",
 ) -> Path:
     """生成 Markdown 投研报告并写入文件，返回文件路径。"""
@@ -113,7 +114,7 @@ def _signal_emoji(composite: str) -> str:
     }.get(composite, "⚪")
 
 
-def _confidence(signal: dict) -> str:
+def _confidence(signal: Mapping[str, Any]) -> str:
     """根据数据质量和信号强度估算置信度。"""
     mode = signal.get("data_source", "mock")
     raw = signal.get("timing_score", 5.0) or 5.0
@@ -140,7 +141,7 @@ def _mock_disclaimer(overall_mode: str) -> str:
     return ""
 
 
-def _key_conclusions(signal: dict, portfolio: dict) -> list[str]:
+def _key_conclusions(signal: Mapping[str, Any], portfolio: Mapping[str, Any]) -> list[str]:
     """从结构化数据生成 3 条关键结论，确保每条都有数据支撑。"""
     conclusions = []
     composite = signal.get("composite_signal", "标配稳健")
@@ -193,7 +194,7 @@ def _key_conclusions(signal: dict, portfolio: dict) -> list[str]:
     return conclusions[:3]
 
 
-def _trigger_conditions(signal: dict, portfolio: dict) -> list[str]:
+def _trigger_conditions(signal: Mapping[str, Any], portfolio: Mapping[str, Any]) -> list[str]:
     """生成本期最关键的加仓/减仓触发条件（可执行，非空话）。"""
     composite = signal.get("composite_signal", "标配稳健")
     sat_pct = portfolio.get("satellite_allocation_pct", 30)
@@ -218,7 +219,7 @@ def _trigger_conditions(signal: dict, portfolio: dict) -> list[str]:
 # 各章节
 # ─────────────────────────────────────────────────────────────
 
-def _s1_conclusion(signal: dict, portfolio: dict, overall_mode: str) -> str:
+def _s1_conclusion(signal: Mapping[str, Any], portfolio: Mapping[str, Any], overall_mode: str) -> str:
     composite = signal.get("composite_signal", "标配稳健")
     emoji = _signal_emoji(composite)
     raw = signal.get("timing_score", 5.0) or 5.0
@@ -260,7 +261,7 @@ def _s1_conclusion(signal: dict, portfolio: dict, overall_mode: str) -> str:
 {trig_md}"""
 
 
-def _s2_data_quality(prov_data: dict, overall_mode: str, stale_warnings: list[str]) -> str:
+def _s2_data_quality(prov_data: Mapping[str, Any], overall_mode: str, stale_warnings: list[str]) -> str:
     rows = ["## 二、数据可信度", "", _mock_disclaimer(overall_mode).strip()]
 
     rows.append("\n| 数据源 | 模式 | 行数 | 最后更新 | 说明 |")
@@ -294,7 +295,7 @@ def _s2_data_quality(prov_data: dict, overall_mode: str, stale_warnings: list[st
 
 # ── 市场主线的子口径（MD/HTML 共用，单一真相源）────────────────
 
-def primary_contradiction(signal: dict) -> str:
+def primary_contradiction(signal: Mapping[str, Any]) -> str:
     """当前主要矛盾：优先 AI Phase 1，否则规则层四分支推断。"""
     val = signal.get("valuation", {})
     val_score = val.get("valuation_score", 5)
@@ -314,7 +315,7 @@ def primary_contradiction(signal: dict) -> str:
         return f"估值与趋势均处中性（估值分 {_score(val_score)}/10，趋势分 {_score(trend_score)}/10）——标配均衡"
 
 
-def market_narrative(signal: dict) -> tuple[str, str]:
+def market_narrative(signal: Mapping[str, Any]) -> tuple[str, str]:
     """市场叙事文本与来源标注（AI 增强 / 规则层）。"""
     ai_analysis = signal.get("ai_analysis")
     if ai_analysis and ai_analysis.get("market_narrative"):
@@ -325,7 +326,7 @@ def market_narrative(signal: dict) -> tuple[str, str]:
     return text, "（规则层）"
 
 
-def alloc_logic_text(signal: dict) -> str:
+def alloc_logic_text(signal: Mapping[str, Any]) -> str:
     """仓位推导逻辑：按综合信号档位给出一句话解释。"""
     composite = signal.get("composite_signal", "标配稳健")
     raw = signal.get("timing_score", 5.0) or 5.0
@@ -337,7 +338,7 @@ def alloc_logic_text(signal: dict) -> str:
     }.get(composite, f"综合评分 {_num(raw, '.2f')}/10")
 
 
-def _s3_market_theme(signal: dict) -> str:
+def _s3_market_theme(signal: Mapping[str, Any]) -> str:
     composite = signal.get("composite_signal", "标配稳健")
     raw = signal.get("timing_score", 5.0) or 5.0
     macro = signal.get("macro", {})
@@ -401,7 +402,7 @@ def _s3_market_theme(signal: dict) -> str:
 {gm_section}"""
 
 
-def _s4_allocation(signal: dict, portfolio: dict) -> str:
+def _s4_allocation(signal: Mapping[str, Any], portfolio: Mapping[str, Any]) -> str:
     core_pct = portfolio.get("core_allocation_pct", 60)
     sat_pct = portfolio.get("satellite_allocation_pct", 30)
     cash_pct = portfolio.get("cash_allocation_pct", 10)
@@ -452,7 +453,7 @@ def _s4_allocation(signal: dict, portfolio: dict) -> str:
 {thesis_section}{scenario_md}"""
 
 
-def _snapshot_change_note(portfolio: dict) -> str:
+def _snapshot_change_note(portfolio: Mapping[str, Any]) -> str:
     from pathlib import Path
     import json
     snap_path = Path(__file__).parent.parent.parent / "data" / "portfolio_snapshot.json"
@@ -508,7 +509,7 @@ def _fund_row(f: dict, rationale_map: dict) -> str:
     )
 
 
-def _s5_fund_table(portfolio: dict, signal: dict) -> str:
+def _s5_fund_table(portfolio: Mapping[str, Any], signal: Mapping[str, Any]) -> str:
     core_funds = portfolio.get("core_funds", [])
     sat_funds = portfolio.get("satellite_funds", [])
     all_funds = core_funds + sat_funds
@@ -533,7 +534,7 @@ def _s5_fund_table(portfolio: dict, signal: dict) -> str:
     return "## 五、推荐基金表\n\n" + "\n".join(rows)
 
 
-def _s6_alternates(portfolio: dict, signal: dict) -> str:
+def _s6_alternates(portfolio: Mapping[str, Any], signal: Mapping[str, Any]) -> str:
     top_picks = portfolio.get("top_picks", [])
     all_selected = {f["fund_code"] for f in portfolio.get("core_funds", []) + portfolio.get("satellite_funds", [])}
     alternates = [f for f in top_picks if str(f.get("fund_code", "")) not in all_selected][:5]
@@ -592,7 +593,7 @@ def region_exposure(all_funds: list) -> dict[str, list[str]]:
     return exposure
 
 
-def _s7_exposure_risk(portfolio: dict, signal: dict) -> str:
+def _s7_exposure_risk(portfolio: Mapping[str, Any], signal: Mapping[str, Any]) -> str:
     core_funds = portfolio.get("core_funds", [])
     sat_funds = portfolio.get("satellite_funds", [])
     all_funds = core_funds + sat_funds
@@ -654,7 +655,7 @@ def _s7_exposure_risk(portfolio: dict, signal: dict) -> str:
 {qdii_risks_md}"""
 
 
-def rule_action_items(signal: dict, portfolio: dict) -> list[str]:
+def rule_action_items(signal: Mapping[str, Any], portfolio: Mapping[str, Any]) -> list[str]:
     """规则层行动条目（无 AI 时的 fallback；MD/HTML 共用，单一真相源）。"""
     composite = signal.get("composite_signal", "标配稳健")
     core_pct = portfolio.get("core_allocation_pct", 60)
@@ -675,7 +676,7 @@ def rule_action_items(signal: dict, portfolio: dict) -> list[str]:
     return plan_items
 
 
-def _s8_action_plan(signal: dict, portfolio: dict) -> str:
+def _s8_action_plan(signal: Mapping[str, Any], portfolio: Mapping[str, Any]) -> str:
     composite = signal.get("composite_signal", "标配稳健")
     vix = signal.get("vix") or 18
     credit_score = signal.get("credit_score") or 5.0
@@ -717,7 +718,7 @@ def _s8_action_plan(signal: dict, portfolio: dict) -> str:
 > 下次数据更新后应重新评估触发状态。"""
 
 
-def _s9_backtest(backtest: Optional[dict], signal: dict) -> str:
+def _s9_backtest(backtest: Optional[Mapping[str, Any]], signal: Mapping[str, Any]) -> str:
     if backtest is None:
         return (
             "## 九、回测与策略验证\n\n"
@@ -881,7 +882,7 @@ _CATEGORY_CN = {
 }
 
 
-def _s11_adversarial_review(portfolio: dict) -> str:
+def _s11_adversarial_review(portfolio: Mapping[str, Any]) -> str:
     """AI 对抗审查结论（仅当启用并产出审查结果时渲染，否则返回空串）。"""
     review = portfolio.get("adversarial_review")
     if not review:
@@ -919,7 +920,7 @@ def _s11_adversarial_review(portfolio: dict) -> str:
     return head + "\n".join(rows)
 
 
-def _s10_appendix(signal: dict, scores_df: Optional[pd.DataFrame]) -> str:
+def _s10_appendix(signal: Mapping[str, Any], scores_df: Optional[pd.DataFrame]) -> str:
     from ..utils.config import load_config
     cfg = load_config()
     weights = cfg.get("scoring_weights", {})

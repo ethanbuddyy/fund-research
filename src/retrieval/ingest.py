@@ -11,9 +11,10 @@ ingestion 受 retrieval.enabled 总开关控制——关掉则一条都不写。
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import re
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from ..utils.config import load_config
 from .store import upsert_document
@@ -40,7 +41,7 @@ def _index_reports_flag() -> bool:
         return False
 
 
-def ingest_run(signal: dict, scores_df=None, portfolio: Optional[dict] = None) -> int:
+def ingest_run(signal: Mapping[str, Any], scores_df=None, portfolio: Optional[Mapping[str, Any]] = None) -> int:
     """持久化本次运行的「用完即弃」文本。返回入库条数。"""
     if not _enabled():
         return 0

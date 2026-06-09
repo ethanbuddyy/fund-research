@@ -3,9 +3,12 @@
 run.py 和 scheduler.py 共用此处的编排逻辑，避免重复维护两条几乎相同的流程。
 新增采集步骤、修改顺序、调整重试逻辑只需改这一处。
 """
+from typing import Any
+
+from src.domain.types import MarketSignal, PortfolioRecommendation
 
 
-def run_update(logger=None) -> dict:
+def run_update(logger=None) -> tuple[MarketSignal, Any, PortfolioRecommendation]:
     """执行完整数据更新流程并返回最新市场信号。
 
     Args:

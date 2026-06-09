@@ -8,6 +8,8 @@
 token 与延迟，故默认关闭，由 config `ai_analysis.adversarial_review.enabled` 控制，
 仅对重要输出按需启用。任何失败都降级为 None，绝不阻断主流程。
 """
+from typing import Any
+from collections.abc import Mapping
 import traceback
 
 from .backend import call_with_tools
@@ -42,7 +44,7 @@ def _fmt(v, suffix=""):
     return f"{v}{suffix}" if v is not None else "N/A"
 
 
-def _format_facts(signal: dict, portfolio: dict) -> str:
+def _format_facts(signal: Mapping[str, Any], portfolio: Mapping[str, Any]) -> str:
     """把审查所需的量化事实压缩成一段，供审查员据此核对决策。
 
     关键：这里提供的事实必须覆盖 Phase1/Phase2 决策时实际看到的同一套数据，
@@ -120,7 +122,7 @@ def _format_facts(signal: dict, portfolio: dict) -> str:
     return "\n".join(lines)
 
 
-def _format_decision(ai_decision: dict) -> str:
+def _format_decision(ai_decision: Mapping[str, Any]) -> str:
     """把 Phase2 决策铺平为待审查文本。"""
     lines = ["=== 待审查的投资决策（Phase2 产出）==="]
     lines.append(f"组合论点：{ai_decision.get('portfolio_thesis', '（无）')}")
@@ -190,7 +192,7 @@ class AdversarialReviewer:
         self.model = rcfg.get("model") or cfg.get("phase2_model", "claude-sonnet-4-6")
         self.max_tokens = rcfg.get("max_tokens", 3000)
 
-    def review(self, market_signal: dict, portfolio: dict, ai_decision: dict) -> dict | None:
+    def review(self, market_signal: Mapping[str, Any], portfolio: Mapping[str, Any], ai_decision: Mapping[str, Any]) -> dict | None:
         """对 Phase2 决策做对抗审查，返回结构化审查结果；失败返回 None（不阻断）。"""
         if not ai_decision:
             return None

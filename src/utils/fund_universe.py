@@ -193,7 +193,7 @@ def classify_asset_class(fund_code: str = "", fund_type: str = "", fund_name: st
     """优先用 universe 的精确归类；未知基金回退到基准/类型/名字推断（比纯名字关键词稳健）。"""
     code = str(fund_code)
     if code in ASSET_CLASS_BY_CODE:
-        return ASSET_CLASS_BY_CODE[code]
+        return str(ASSET_CLASS_BY_CODE[code])
 
     text = f"{fund_type} {fund_name} {benchmark}"
     if any(k in text for k in ["债", "bond", "Bond"]):

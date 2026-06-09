@@ -1,4 +1,6 @@
 """投资组合构建与建议"""
+from typing import Any
+from collections.abc import Mapping
 import json
 import pandas as pd
 from pathlib import Path
@@ -57,12 +59,13 @@ def build_portfolio_recommendation(market_signal: MarketSignal, top_n: int = 10)
 
     # ── AI 阶段二：投资决策增强（配置开关控制）──────────
     cfg_ai = cfg.get("ai_analysis", {})
-    if cfg_ai.get("enabled", False) and market_signal.get("ai_analysis") is not None:
+    ai_phase1 = market_signal.get("ai_analysis")
+    if cfg_ai.get("enabled", False) and ai_phase1 is not None:
         try:
             from ..ai.phase2_portfolio_advisor import PortfolioAdvisor
             ai_decision = PortfolioAdvisor().advise(
                 market_signal=market_signal,
-                ai_phase1=market_signal["ai_analysis"],
+                ai_phase1=ai_phase1,
                 portfolio=portfolio,
             )
             if ai_decision:
@@ -203,10 +206,11 @@ def _select_funds(pool: pd.DataFrame, alloc: float, max_n: int,
     """
     candidate_codes = pool["fund_code"].astype(str).tolist()
 
+    selected: list[str]
     if not prev_scores:
         selected = candidate_codes[:max_n]
     else:
-        selected: list[str] = [c for c in prev_scores if c in candidate_codes][:max_n]
+        selected = [c for c in prev_scores if c in candidate_codes][:max_n]
         for code in candidate_codes:
             if code in selected:
                 continue
@@ -249,7 +253,7 @@ def _select_funds(pool: pd.DataFrame, alloc: float, max_n: int,
     ]
 
 
-def _generate_notes(market_signal: dict) -> list[str]:
+def _generate_notes(market_signal: Mapping[str, Any]) -> list[str]:
     signal = market_signal.get("composite_signal", "标配稳健")
     macro = market_signal.get("macro", {})
     notes = []

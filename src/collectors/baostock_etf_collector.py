@@ -58,7 +58,7 @@ def collect_etf_nav(
     fund_list_rows: list[dict] = []
 
     for f in targets:
-        code      = f["fund_code"]
+        code      = str(f["fund_code"])
         ticker    = _yf_ticker(code)
         name      = f["fund_name"]
         fund_type = f.get("fund_type", "ETF")
@@ -124,7 +124,7 @@ def collect_etf_nav(
     fetched_codes = {r["fund_code"] for r in all_nav_rows}
     missing_funds = [f for f in targets if f["fund_code"] not in fetched_codes]
     if missing_funds:
-        missing_codes = [f["fund_code"] for f in missing_funds]
+        missing_codes = [str(f["fund_code"]) for f in missing_funds]
         if verbose:
             print(f"[etf_collector] yfinance 未覆盖 {len(missing_funds)} 只，转用天天基金兜底: {missing_codes}")
 

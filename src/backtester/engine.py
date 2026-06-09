@@ -7,6 +7,7 @@
 本回测选中的基金在早期可能尚未成立，未被选中的失败基金也已消失。解读时应把
 策略表现视为上界而非可复现收益。结果中的 survivorship_note 字段同步披露此点。
 """
+from typing import Optional
 import pandas as pd
 import numpy as np
 from datetime import datetime
@@ -35,14 +36,14 @@ RF_ANNUAL = 0.02             # 无风险利率假设 2%
 # ─────────────────────────────────────────────
 
 def run_backtest(
-    start_date: str = None,
-    end_date: str = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     top_n: int = 5,
     rebalance_freq: str = "MS",
-    cape_overvalued: float = None,      # None = 使用 settings.yaml 值
-    min_cash_pct: float = None,         # 强制最低现金下限（0~0.5），None = 不覆盖
+    cape_overvalued: Optional[float] = None,      # None = 使用 settings.yaml 值
+    min_cash_pct: Optional[float] = None,         # 强制最低现金下限（0~0.5），None = 不覆盖
     correct_survivorship: bool = True,  # 是否同步运行成立日期过滤的对照组
-    factor_weights: dict = None,        # None = 使用 _FACTOR_WEIGHTS 默认权重
+    factor_weights: Optional[dict] = None,        # None = 使用 _FACTOR_WEIGHTS 默认权重
 ) -> dict:
     """
     执行走向前月度回测。
@@ -280,9 +281,9 @@ def _backtest_data_source() -> str:
 
 def _compute_signal(sp500_snap: pd.Series, mkt_snap: pd.DataFrame,
                     mac_snap: pd.DataFrame, cfg: dict,
-                    cape_snap: pd.Series = None,
-                    global_mac_snap: pd.DataFrame = None,
-                    factor_weights: dict = None) -> dict:
+                    cape_snap: Optional[pd.Series] = None,
+                    global_mac_snap: Optional[pd.DataFrame] = None,
+                    factor_weights: Optional[dict] = None) -> dict:
     """
     用截止日期快照重算市场信号（与 signals.py 逻辑严格对应，6因子版本）。
     估值优先用真实 CAPE 历史（cape_snap，截至 t0，无前视）；缺失时回退点位近似。
@@ -733,8 +734,8 @@ def _ablate_weights(base: dict, factor: str) -> dict:
 
 
 def run_factor_attribution(
-    start_date: str = None,
-    end_date: str = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     top_n: int = 5,
     rebalance_freq: str = "MS",
 ) -> dict:

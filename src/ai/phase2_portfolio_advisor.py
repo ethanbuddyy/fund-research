@@ -1,4 +1,6 @@
 """Phase 2: Portfolio Advisor — 投资决策阶段"""
+from typing import Any
+from collections.abc import Mapping
 import traceback
 from .backend import call_with_tools
 from .schemas import PHASE2_TOOL
@@ -49,7 +51,7 @@ position_sizing_notes 要求：
 """
 
 
-def _format_phase1_summary(phase1: dict) -> str:
+def _format_phase1_summary(phase1: Mapping[str, Any]) -> str:
     risk_lines = []
     for r in phase1.get("risk_factors", [])[:3]:
         risk_lines.append(f"  - [{r.get('severity','?')}] {r.get('risk','')}")
@@ -80,7 +82,7 @@ def _format_phase1_summary(phase1: dict) -> str:
     return "\n".join(lines)
 
 
-def _format_funds(portfolio: dict, market_signal: dict) -> str:
+def _format_funds(portfolio: Mapping[str, Any], market_signal: Mapping[str, Any]) -> str:
     from ..domain.scoring import POSITION_TIERS
     tier_lines = "；".join(
         f"{name}=核心{c*100:.0f}/卫星{s*100:.0f}/现金{h*100:.0f}"
@@ -195,9 +197,9 @@ class PortfolioAdvisor:
 
     def advise(
         self,
-        market_signal: dict,
-        ai_phase1: dict,
-        portfolio: dict,
+        market_signal: Mapping[str, Any],
+        ai_phase1: Mapping[str, Any],
+        portfolio: Mapping[str, Any],
     ) -> dict | None:
         try:
             result = call_with_tools(

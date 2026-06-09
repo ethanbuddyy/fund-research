@@ -1,4 +1,6 @@
 """综合市场信号生成"""
+from typing import Any
+from collections.abc import Mapping
 import pandas as pd
 import numpy as np
 from datetime import datetime
@@ -170,7 +172,7 @@ def _get_fund_list() -> list:
     return df.to_dict("records")
 
 
-def _save_signal(signal: dict):
+def _save_signal(signal: Mapping[str, Any]):
     row = {
         "date": signal["date"],
         "macro_cycle": signal["macro_cycle"],

@@ -42,7 +42,8 @@ def run_check_holdings(source: str) -> None:
     if not market_signal:
         print("[持仓诊断] 数据库无市场信号，正在采集数据（首次运行）...")
         from ..application.update_pipeline import run_update
-        market_signal, _, _ = run_update()
+        _signal, _, _ = run_update()
+        market_signal = dict(_signal)
 
     try:
         result = check_holdings(holdings, market_signal)

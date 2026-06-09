@@ -3,3 +3,15 @@
 testpaths = ["tests"]
 norecursedirs = ["tools", ".venv", "venv", "*.egg-info", "build", "dist"]
 addopts = "-ra"
+
+[tool.mypy]
+# 务实基线：第三方库无 stub 时忽略其导入，不强制全量注解；
+# 重点守 domain/types.py 的 TypedDict 契约（signal/portfolio 跨 8+ 模块传递）。
+# 目标是 `mypy src/` 零错误，作为防"改 key 漂移"的护栏（见 CLAUDE.md 不变量）。
+python_version = "3.10"
+ignore_missing_imports = true
+exclude = '(^|/)(tools|build|dist|\.venv|venv)/'
+# 暂不开启的严格项（存量代码渐进收紧时再逐个打开）：
+disallow_untyped_defs = false
+check_untyped_defs = false
+warn_unused_ignores = true

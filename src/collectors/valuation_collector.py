@@ -84,12 +84,12 @@ def collect_valuation_data() -> dict:
 
     if has_cape and has_pe:
         # 判断 CAPE 来源决定标签
-        source_used = saved.get("_cape_source", "multpl.com")
+        source_used = str(saved.get("_cape_source", "multpl.com"))
         provenance.record("valuation", provenance.REAL, total_rows, source_used)
     elif has_cape or has_pe:
-        parts = []
+        parts: list[str] = []
         if has_cape:
-            parts.append(saved.get("_cape_source", "cape"))
+            parts.append(str(saved.get("_cape_source", "cape")))
         if has_pe:
             parts.append("yfinance(PE)")
         provenance.record("valuation", provenance.PARTIAL, total_rows, " + ".join(parts))

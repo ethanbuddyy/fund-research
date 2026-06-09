@@ -7,9 +7,10 @@
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 import math
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
@@ -365,7 +366,7 @@ def _score_performance(perf: dict, adv: dict, peer: dict) -> dict:
         ann_r3 = _annualize_pct(r3y, 3)
         ann_med = _annualize_pct(med, 3)
         diff = ann_r3 - ann_med
-        s = 4 if diff >= 3 else 3 if diff >= 1 else 2 if diff >= 0 else 1 if diff >= -2 else 0
+        s: float = 4 if diff >= 3 else 3 if diff >= 1 else 2 if diff >= 0 else 1 if diff >= -2 else 0
         score += s
         details["return_3y"] = {"raw": ann_r3, "peer_median": ann_med, "diff": diff, "score": s, "max": 4, "coverage": "COMPUTED"}
     else:
@@ -503,7 +504,7 @@ def _score_manager(fund_info: dict, adv: dict) -> dict:
     # ① 任职年限估算（4分）—— 以成立日期为代理下限
     tenure = fund_info.get("tenure_years")
     if tenure is not None:
-        s = 4 if tenure >= 7 else 3 if tenure >= 5 else 2 if tenure >= 3 else 1 if tenure >= 1 else 0
+        s: float = 4 if tenure >= 7 else 3 if tenure >= 5 else 2 if tenure >= 3 else 1 if tenure >= 1 else 0
         score += s
         details["tenure_years"] = {
             "value": round(tenure, 1), "note": "以基金成立日为代理（实际可能更短）",
@@ -871,7 +872,7 @@ def _build_conclusion(
     vetoes: list[dict],
     fund_info: dict,
     adv: dict,
-    market_signal: dict | None,
+    market_signal: Mapping[str, Any] | None,
 ) -> dict:
     hard_vetoes = [v for v in vetoes if v.get("severity") == "hard"]
     if hard_vetoes:

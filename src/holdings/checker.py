@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, asdict
-from typing import Optional
+from typing import Optional, cast
 
 import pandas as pd
 
@@ -177,7 +177,7 @@ def _enrich_from_db(items: list[HoldingItem], market_signal: dict) -> list[Holdi
 
         # expense_ratio fallback: 从 universe 字典补
         if item.expense_ratio is None and code in EXPENSE_RATIO_BY_CODE:
-            item.expense_ratio = EXPENSE_RATIO_BY_CODE[code]
+            item.expense_ratio = cast(float, EXPENSE_RATIO_BY_CODE[code])
 
         # ── 资产类别分类 ───────────────────────────────
         item.asset_class = classify_asset_class(
@@ -189,7 +189,7 @@ def _enrich_from_db(items: list[HoldingItem], market_signal: dict) -> list[Holdi
 
         # ── 地区推断 ───────────────────────────────────
         if code in REGION_BY_CODE:
-            item.region = REGION_BY_CODE[code]
+            item.region = str(REGION_BY_CODE[code])
         else:
             item.region = infer_region(item.fund_name, benchmark)
 
@@ -255,7 +255,7 @@ def _compute_analytics(items: list[HoldingItem], market_signal: dict) -> dict:
     scored = [i for i in non_cash if i.score and i.score.get("total_score") is not None]
     scored_weight = sum(i.weight for i in scored) or None
     weighted_score = (
-        sum(i.score["total_score"] * i.weight for i in scored) / scored_weight
+        sum(i.score["total_score"] * i.weight for i in scored if i.score) / scored_weight
         if scored_weight else None
     )
 
@@ -266,7 +266,7 @@ def _compute_analytics(items: list[HoldingItem], market_signal: dict) -> dict:
     rated = [i for i in non_cash if i.expense_ratio is not None]
     rated_weight = sum(i.weight for i in rated) or None
     weighted_er = (
-        sum(i.expense_ratio * i.weight for i in rated) / rated_weight
+        sum((i.expense_ratio or 0.0) * i.weight for i in rated) / rated_weight
         if rated_weight else None
     )
 

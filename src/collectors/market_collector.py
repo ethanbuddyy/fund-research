@@ -107,7 +107,7 @@ def _generate_mock_market(symbols: list) -> dict:
             "high": prices * 1.005,
             "low": prices * 0.995,
             "close": prices,
-            "volume": np.random.randint(1e6, 1e9, 252).astype(float),
+            "volume": np.random.randint(1_000_000, 1_000_000_000, 252).astype(float),
         })
     return results
 

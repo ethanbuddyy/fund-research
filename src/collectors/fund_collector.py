@@ -181,7 +181,7 @@ def _save_nav_history(nav_history: dict):
 def _load_from_csv_seed() -> tuple[list, dict]:
     """从本地CSV种子文件加载基金列表和净值历史"""
     fund_list = []
-    nav_history = {}
+    nav_history: dict = {}
 
     # 加载基金列表
     if _LIST_CSV.exists():

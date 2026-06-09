@@ -68,8 +68,8 @@ def assess_region_outlook(fund_region: str) -> dict:
 
     # 确定焦点地区
     focus_key = _FUND_REGION_MAP.get(fund_region)
-    if focus_key and covered.get(focus_key):
-        focus_data = covered[focus_key]
+    focus_data = covered.get(focus_key) if focus_key else None
+    if focus_key and focus_data:
         focus = {
             "name": f"{fund_region}（{_REGION_CONFIG[focus_key]['label_cn']}代理）"
                     if fund_region != focus_key else _REGION_CONFIG[focus_key]["label_cn"],

@@ -7,6 +7,7 @@
   fund_list.mgmt_fee / custody_fee  ← 管理费 + 托管费
   fund_fees                          ← 申购费 + 赎回费记录
 """
+from typing import Optional
 import re
 import time
 from ..utils.database import get_connection
@@ -20,7 +21,7 @@ _HEADERS = {
 }
 
 
-def collect_fund_fees(fund_codes: list = None) -> dict:
+def collect_fund_fees(fund_codes: Optional[list] = None) -> dict:
     """采集各基金费率，写入 fund_list 和 fund_fees 表。"""
     try:
         import requests

@@ -1,5 +1,8 @@
 """单基金综合研判子命令：逻辑调度 + 终端输出。"""
 import os
+from typing import Optional, cast
+
+from ..domain.types import MarketSignal
 
 
 def run_analyze(query: str) -> None:
@@ -26,7 +29,7 @@ def run_analyze(query: str) -> None:
     print(f"[研判] 正在分析基金 {fund_code} ...")
     fetch_on_demand(fund_code)
     market_signal = load_signal_from_db()
-    result = analyze_fund(fund_code, market_signal or None)
+    result = analyze_fund(fund_code, cast(Optional[MarketSignal], market_signal or None))
     print_analysis(result)
 
     try:
