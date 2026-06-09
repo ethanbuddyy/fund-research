@@ -1,0 +1,35 @@
+name: CI
+
+# 把本地护栏焊成 push/PR 的强制门：mypy 守 TypedDict 契约（防"改 key 漂移"），
+# pytest 守主链路与不变量。任一红则合并被挡。
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          # requirements.lock 钉的 pandas 3.0 / numpy 2.4 需 Python ≥ 3.11
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements.lock
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # 复现环境用 lock；mypy 是开发期工具，单独钉版本与本地一致
+          pip install -r requirements.lock
+          pip install mypy==2.1.0
+
+      - name: Type check (mypy 契约护栏)
+        run: mypy src/
+
+      - name: Run tests
+        run: pytest

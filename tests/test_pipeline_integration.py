@@ -301,3 +301,95 @@ class TestCalcMetricsReal:
         rets = pd.Series([0.05, -0.10, 0.03, -0.08, 0.04, 0.02])
         m = calc_metrics(rets, "回撤")
         assert m["max_drawdown"] <= 0
+
+
+# ────────────────────────────────────────────────────────────────────
+# 5. 止损顺序不变量 —— update_pipeline 内 update_and_check 必须在
+#    build_portfolio_recommendation 之前（CLAUDE.md 关键不变量）。
+#
+#    守护方式：止损触发时 pipeline 先把 signal 仓位覆盖为「减仓防守」档，
+#    再据此构建组合。本测试用 spy 捕获 build 被调用「当刻」所见的 signal——
+#    若有人把追踪块挪到 build 之后，spy 会读到未被覆盖的原始档位，测试变红。
+#    （这正是该不变量唯一会「静默失效」的失效模式，纯注释无法守住。）
+# ────────────────────────────────────────────────────────────────────
+
+class TestStopLossOrderingInvariant:
+    # 止损块之前 run_update 逐个 import-and-call 的上游步骤，全部打成 no-op，
+    # 使断言聚焦在「追踪 → 覆盖 → 构建」这一段真实生产代码路径上。
+    _UPSTREAM_NOOPS = [
+        ("src.utils.database", "init_database", lambda *a, **k: None),
+        ("src.collectors.macro_collector", "collect_macro_data", lambda *a, **k: None),
+        ("src.collectors.global_macro_collector", "collect_global_macro", lambda *a, **k: None),
+        ("src.collectors.market_collector", "collect_market_data", lambda *a, **k: None),
+        ("src.collectors.fund_screener", "screen_funds", lambda *a, **k: []),
+        ("src.collectors.fund_collector", "collect_fund_data", lambda *a, **k: None),
+        ("src.collectors.eastmoney_collector", "collect_eastmoney", lambda *a, **k: None),
+        ("src.collectors.baostock_etf_collector", "collect_etf_nav", lambda *a, **k: 0),
+        ("src.collectors.fund_fee_collector", "collect_fund_fees", lambda *a, **k: None),
+        ("src.collectors.valuation_collector", "collect_valuation_data", lambda *a, **k: None),
+        ("src.analyzers.fund_analyzer", "analyze_all_funds", lambda *a, **k: None),
+        ("src.recommender.scorer", "score_all_funds", lambda *a, **k: None),
+        ("src.retrieval.ingest", "ingest_run", lambda *a, **k: 0),
+    ]
+
+    def _run_with_stop_loss(self, monkeypatch, *, triggered: bool):
+        """打桩跑一次 run_update，返回 build 被调用当刻捕获的 signal 仓位快照。"""
+        for mod, attr, fn in self._UPSTREAM_NOOPS:
+            monkeypatch.setattr(f"{mod}.{attr}", fn)
+
+        # 原始信号档位（标配稳健 60/30/10）——与触发后的减仓防守档明显不同
+        monkeypatch.setattr(
+            "src.recommender.signals.generate_market_signal",
+            lambda *a, **k: {
+                "date": "2026-06-09", "composite_signal": "标配稳健",
+                "core_allocation": 0.60, "satellite_allocation": 0.30,
+                "cash_allocation": 0.10,
+            },
+        )
+        # 开启止损（risk_management.stop_loss_pct > 0）
+        monkeypatch.setattr(
+            "src.utils.config.load_config",
+            lambda *a, **k: {"risk_management": {"stop_loss_pct": 0.15}},
+        )
+        # 追踪结果按参数决定是否触发
+        monkeypatch.setattr(
+            "src.utils.portfolio_tracker.update_and_check",
+            lambda *a, **k: {
+                "triggered": triggered, "drawdown_pct": 20.0,
+                "portfolio_nav": 0.80, "high_water_mark": 1.00,
+            },
+        )
+
+        # build spy：捕获被调用「当刻」所见的 signal 仓位（关键断言对象）
+        captured = {}
+
+        def _spy_build(sig, *a, **k):
+            captured["composite_signal"] = sig.get("composite_signal")
+            captured["core_allocation"] = sig.get("core_allocation")
+            captured["stop_loss_triggered"] = sig.get("stop_loss_triggered")
+            return {"core_funds": [], "satellite_funds": [], "top_picks": []}
+
+        monkeypatch.setattr(
+            "src.recommender.portfolio.build_portfolio_recommendation", _spy_build
+        )
+
+        from src.application.update_pipeline import run_update
+        run_update()
+        assert captured, "build_portfolio_recommendation 未被调用"
+        return captured
+
+    def test_triggered_override_reaches_build(self, monkeypatch):
+        """止损触发：build 必须看到已被覆盖的「减仓防守」档（证明追踪在 build 之前）。"""
+        captured = self._run_with_stop_loss(monkeypatch, triggered=True)
+        assert captured["composite_signal"] == "减仓防守", (
+            "止损触发后 build 收到的仍是原始档位——追踪块可能被挪到了 build 之后"
+        )
+        assert captured["core_allocation"] == 0.35
+        assert captured["stop_loss_triggered"] is True
+
+    def test_not_triggered_keeps_original(self, monkeypatch):
+        """未触发：build 看到原始档位，止损标志不应被置位（无误触发）。"""
+        captured = self._run_with_stop_loss(monkeypatch, triggered=False)
+        assert captured["composite_signal"] == "标配稳健"
+        assert captured["core_allocation"] == 0.60
+        assert not captured["stop_loss_triggered"]

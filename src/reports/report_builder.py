@@ -287,8 +287,8 @@ def _s2_data_quality(prov_data: Mapping[str, Any], overall_mode: str, stale_warn
     try:
         from ..retrieval.recall import status_line
         rows.append(f"\n> 🔎 {status_line()}")
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[WARN] 报告：检索层状态行跳过: {e}")
 
     return "\n".join(rows)
 
@@ -1043,16 +1043,16 @@ def _load_fund_extra(fund_code: str) -> dict:
                 for _, row in yr_df.iterrows()
                 if row["return_pct"] is not None
             }
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[WARN] 报告富集：逐年收益跳过（{fund_code}）: {e}")
 
     # 基金经理详情
     try:
         mgr_df = read_table("fund_manager", "fund_code = ?", (fund_code,))
         if not mgr_df.empty:
             extra["managers"] = mgr_df.to_dict("records")
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[WARN] 报告富集：基金经理跳过（{fund_code}）: {e}")
 
     # 申购/赎回费
     try:
@@ -1060,8 +1060,8 @@ def _load_fund_extra(fund_code: str) -> dict:
         if not fee_df.empty:
             extra["purchase_fees"]   = fee_df[fee_df["fee_type"] == "purchase"].to_dict("records")
             extra["redemption_fees"] = fee_df[fee_df["fee_type"] == "redemption"].to_dict("records")
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[WARN] 报告富集：申购/赎回费跳过（{fund_code}）: {e}")
 
     # 换手率
     try:
@@ -1073,8 +1073,8 @@ def _load_fund_extra(fund_code: str) -> dict:
                 str(int(row["year"])): float(row["turnover_rate"])
                 for _, row in turn_df.iterrows()
             }
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[WARN] 报告富集：换手率跳过（{fund_code}）: {e}")
 
     # 管理费/托管费分拆
     try:
@@ -1085,8 +1085,8 @@ def _load_fund_extra(fund_code: str) -> dict:
             cf = r.get("custody_fee")
             extra["mgmt_fee"]    = float(mf)    if mf    is not None and mf    == mf    else None
             extra["custody_fee"] = float(cf)    if cf    is not None and cf    == cf    else None
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[WARN] 报告富集：管理费/托管费跳过（{fund_code}）: {e}")
 
     return extra
 
