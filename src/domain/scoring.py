@@ -102,13 +102,16 @@ def tier_allocation_str(tier: str) -> str:
     return f"核心{c*100:.0f}%/卫星{s*100:.0f}%/现金{h*100:.0f}%"
 
 
-def format_scenario_case(case) -> str:
+def format_scenario_case(case, include_actions: bool = True) -> str:
     """把单个情景（结构化 dict 或旧式纯字符串）渲染为一行可读文本。
 
     结构化字段：trigger（触发条件）/ target_tier（目标档位，取自 POSITION_TIERS）/
     fund_actions（基金方向）。目标档位的绝对仓位由 tier_allocation_str 确定性填充，
     LLM 不在文字里写百分比，从根上消除"加减对不齐"的算术矛盾。
     兼容降级：若模型仍返回纯字符串，原样透传。
+
+    include_actions=False 时省略「操作」段——情景表只回答「会怎样」，
+    具体操作收归「何时改变」唯一出处，避免同一指令多处重复（报告层去重）。
     """
     if isinstance(case, str):
         return case
@@ -121,7 +124,7 @@ def format_scenario_case(case) -> str:
     if tier:
         alloc = tier_allocation_str(tier)
         parts.append(f"目标档位：{tier}（{alloc}）" if alloc else f"目标档位：{tier}")
-    if case.get("fund_actions"):
+    if include_actions and case.get("fund_actions"):
         parts.append(f"操作：{case['fund_actions']}")
     return " ｜ ".join(parts) if parts else "—"
 

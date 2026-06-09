@@ -55,6 +55,7 @@ def build_portfolio_recommendation(market_signal: MarketSignal, top_n: int = 10)
         "total_invested_pct": round(total_invested * 100, 0),
         "top_picks": merged.head(top_n).to_dict("records"),
         "investment_notes": _generate_notes(market_signal),
+        "score_threshold": score_threshold,  # 报告层「未入选原因」据此说明，避免猜测
     }
 
     # ── AI 阶段二：投资决策增强（配置开关控制）──────────

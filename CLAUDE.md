@@ -52,9 +52,20 @@ config/settings.yaml + src/domain/factor_config.py   ← 指标字典/权重(唯
 `src/domain/types.py: MarketSignal`);报告层只消费,不反向调决策重算。AI 三阶段挂载点:
 phase1 嵌在 `recommender/signals.py`,**phase2 与 phase3 均在 `recommender/portfolio.py` 调用**
 (phase3 紧随 phase2 复核其产物),报告层 `src/reports/` 只**渲染** phase3 结果
-(`_s11_adversarial_review`),不调用 AI。〔现状:`recommender` 不 import `reports`;AI 隔离在
+(横幅 `review_banner`/复核块 `review_action_caveat`/附录全表 `_adversarial_findings_table`),
+不调用 AI。〔现状:`recommender` 不 import `reports`;AI 隔离在
 `src/ai/`,AI 层不反向 import 报告层(`domain/scoring.py` 作为最底层供两边共用情景渲染纯函数)。
 注意——文档理想中的 `shared/` JSON 物理隔离墙在本项目**未落地**,signal 以内存 dict 传递,改字段名须顾下游〕
+
+**报告三层结构(2026-06 重构,改报告前必读)** —— 正文四层:① 本期决策 ② 为什么(证据)
+③ 买什么·卖什么 ④ 何时改变;数据可信度/备选池/回测/算法参数/对抗审查全文收进**折叠
+审计附录**(`<details>`)。MD(`report_builder.py`)与 HTML(`html_report_builder.py`)**结构同源**,
+改一边须同步另一边。两条新不变量:
+(a) **六因子表权重必取 `factor_config.FACTOR_WEIGHTS`**,禁止硬编码,且须含 `global_macro`——
+否则用户算不平综合分(回归 `tests/test_report_builder.py::TestA1SixFactorTable`)。
+(b) **触发条件单一真相源 `report_editor.canonical_triggers`**:正文「何时改变」是唯一整列出处,
+首页只放 `headline_triggers`(最关键 1 条)+提示;情景表用 `format_scenario_case(.., include_actions=False)`
+只说「会怎样」,不重复操作。改触发渲染勿在各处各写一遍(回归 `TestThreeLayerStructure`)。
 
 **4. 溯源必含 + 内容哈希缓存** —— 两层都在 `src/utils/provenance.py`:
 (a) 模式溯源:`record(source, mode)` 标注 real/partial/mock,`overall_mode()` 聚合

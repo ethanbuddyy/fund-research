@@ -68,5 +68,6 @@ class PortfolioRecommendation(TypedDict, total=False):
     total_invested_pct: float
     top_picks: list[dict[str, Any]]
     investment_notes: list[str]
+    score_threshold: float           # 换仓门槛分（报告层「未入选原因」据此说明）
     ai_decision: dict[str, Any]      # 仅 AI 阶段二开启且 phase1 成功时存在
     adversarial_review: Optional[dict[str, Any]]  # 仅 Phase3 对抗审查开启且有结果时存在

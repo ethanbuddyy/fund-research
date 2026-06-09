@@ -17,10 +17,13 @@ import pandas as pd
 from ..domain.labels import vix_elevated, credit_tight
 from ..domain.types import MarketSignal, PortfolioRecommendation
 from .report_builder import (
-    _key_conclusions, _trigger_conditions, primary_contradiction,
-    market_narrative, alloc_logic_text, region_exposure, rule_action_items,
+    _key_conclusions, primary_contradiction,
+    market_narrative, alloc_logic_text, region_exposure,
+    review_findings, _VERDICT_LABEL, _CATEGORY_CN, _snapshot_change_note,
 )
+from .report_editor import canonical_triggers, headline_triggers
 from ..domain.scoring import format_scenario_case
+from ..domain.factor_config import FACTOR_WEIGHTS
 
 # ─────────────────────────────────────────────────────────────
 # 公共入口
@@ -388,23 +391,39 @@ def _render(signal: Mapping[str, Any], portfolio: Mapping[str, Any],
     prov_data = signal.get("data_quality") or prov_mod.read_all()
     overall_mode = prov_mod.overall_mode()
 
+    def _divider(t):
+        return (f'<div style="margin:34px 0 6px;padding-bottom:8px;border-bottom:2px solid var(--border);'
+                f'font-size:13px;font-weight:700;letter-spacing:1px;color:var(--accent);'
+                f'text-transform:uppercase;">{t}</div>')
+
     sections = [
         _header(signal, portfolio, composite, sig_cls, raw_score, cape, vix,
                 core_pct, sat_pct, cash_pct, date_str, overall_mode),
         f'<div class="main">',
+        # ── 三层结构：① 本期决策 ② 为什么 ③ 买卖 ④ 何时改变 + 折叠审计附录 ──
+        _divider("一、本期决策"),
         _section_conclusion(signal, portfolio),
-        _section_data_quality(prov_data, overall_mode),
+        _divider("二、为什么（证据）"),
         _section_market(signal, composite, raw_score),
         _section_global_macro(signal),
+        _divider("三、买什么·卖什么"),
         _section_allocation(portfolio, core_pct, sat_pct, cash_pct),
-        _section_scenario(portfolio),
         _section_funds(portfolio),
-        _section_alternates(portfolio),
+        _section_scenario(portfolio),
         _section_risk(portfolio, signal),
+        _divider("四、何时改变"),
         _section_action(signal, portfolio),
+        # ── 折叠·审计附录（数据可信度 / 备选池 / 回测 / 算法参数 / 对抗审查全文）──
+        ('<details style="margin-top:28px;"><summary style="cursor:pointer;font-size:14px;'
+         'font-weight:700;color:var(--text-bright);padding:12px 0;">📎 审计附录'
+         '（数据可信度 / 备选池 / 回测 / 算法参数 / 对抗审查全文 — 点击展开）</summary>'
+         '<div style="margin-top:12px;">'),
+        _section_data_quality(prov_data, overall_mode),
+        _section_alternates(portfolio),
         _section_backtest(backtest),
         _section_appendix(signal),
         _section_adversarial(portfolio),
+        '</div></details>',
         '</div>',
         _footer(date_str),
     ]
@@ -475,11 +494,32 @@ def _header(signal, portfolio, composite, sig_cls, raw_score,
 <div class="main">{disclaimer}</div>"""
 
 
+def _review_banner_html(portfolio: Mapping[str, Any]) -> str:
+    """首页风险横幅（HTML）：审查判级非 sound 时在动手前先亮警示（A2，与 MD 同源）。"""
+    verdict, summary, findings = review_findings(portfolio)
+    if not verdict or verdict == "sound":
+        return ""
+    label = _VERDICT_LABEL.get(verdict, verdict)
+    conflicts = [f for f in findings if f.get("category") == "internal_inconsistency"]
+    extra = ""
+    if conflicts:
+        extra = (f'<div style="margin-top:6px;font-weight:600;">执行前须先解决 '
+                 f'{len(conflicts)} 处内部矛盾，否则下方操作建议口径不自洽。</div>')
+    return f"""
+  <div class="card" style="border-left:4px solid var(--red);background:rgba(229,72,77,.08);margin-bottom:16px;">
+    <div style="font-weight:700;color:var(--red);margin-bottom:4px;">⚠️ AI 对抗审查：{_e(label)}</div>
+    <div style="font-size:13px;color:var(--text);line-height:1.7;">{_e(summary[:240])}</div>
+    {extra}
+    <div style="font-size:12px;color:var(--text-dim);margin-top:6px;">详见下方「AI 对抗审查」板块。</div>
+  </div>"""
+
+
 def _section_conclusion(signal: Mapping[str, Any], portfolio: Mapping[str, Any]) -> str:
-    """首页结论：关键结论 + 本期最重要触发条件（与 MD 第一章同源）。"""
-    conclusions = _key_conclusions(signal, portfolio)
-    triggers = _trigger_conditions(signal, portfolio)
-    if not conclusions and not triggers:
+    """首页结论：关键结论 + 本期最重要触发（与 MD 第一层同源；触发只展示最关键，完整见行动计划）。"""
+    conclusions = _key_conclusions(signal, portfolio)[:2]
+    triggers = headline_triggers(signal, portfolio, 1)  # 唯一出处在「何时改变」，首页只放最关键 1 条
+    banner = _review_banner_html(portfolio)
+    if not conclusions and not triggers and not banner:
         return ""
 
     conc_html = "".join(
@@ -491,9 +531,16 @@ def _section_conclusion(signal: Mapping[str, Any], portfolio: Mapping[str, Any])
       <div style="font-size:13px;color:var(--text);line-height:1.7">{_e(t)}</div>
     </li>""" for t in triggers)
 
+    # 较上期换仓变动（与 MD 第一层同源）
+    snap = _snapshot_change_note(portfolio).replace("**换仓变动：**", "").replace("\n", " ").strip()
+    snap_html = (f'<div style="margin-bottom:14px;font-size:13px;color:var(--text-dim);">'
+                 f'<b style="color:var(--text)">较上期：</b>{_e(snap)}</div>') if snap else ""
+
     return f"""
 <div class="section">
   <div class="section-title">首页结论</div>
+  {banner}
+  {snap_html}
   <div class="two-col">
     <div class="card">
       <div style="font-size:12px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.8px;margin-bottom:12px;">关键结论</div>
@@ -580,19 +627,22 @@ def _section_market(signal: Mapping[str, Any], composite: str, raw_score: float)
     val_score    = (signal.get("valuation") or {}).get("valuation_score", 5) or 5
     trend_score  = signal.get("trend_score") or 5
     credit_score = signal.get("credit_score") or 5
+    gm_score     = signal.get("global_macro_score") or 5
     vix          = signal.get("vix") or 18
     contrarian   = 10 - (((signal.get("sentiment") or {}).get("score") or 50)) / 10
 
+    # 六因子：权重取自 FACTOR_WEIGHTS（唯一真相源），与 MD 第三章及 signals.py 同源
     factors = [
-        ("宏观周期",   macro_adj,    "20%", 0.20),
-        ("市场估值",   val_score,    "20%", 0.20),
-        ("逆向情绪",   contrarian,   "15%", 0.15),
-        ("价格趋势",   trend_score,  "30%", 0.30),
-        ("信用利差",   credit_score, "15%", 0.15),
+        ("宏观周期",   macro_adj,    FACTOR_WEIGHTS["macro"]),
+        ("市场估值",   val_score,    FACTOR_WEIGHTS["valuation"]),
+        ("逆向情绪",   contrarian,   FACTOR_WEIGHTS["sentiment"]),
+        ("价格趋势",   trend_score,  FACTOR_WEIGHTS["trend"]),
+        ("信用利差",   credit_score, FACTOR_WEIGHTS["credit"]),
+        ("全球宏观",   gm_score,     FACTOR_WEIGHTS["global_macro"]),
     ]
 
     rows = []
-    for name, score, weight, w in factors:
+    for name, score, w in factors:
         c = ("var(--green)" if score >= 6.5 else
              "var(--amber)" if score >= 4.5 else "var(--red)")
         bar = _score_bar(score, 10, c)
@@ -602,7 +652,7 @@ def _section_market(signal: Mapping[str, Any], composite: str, raw_score: float)
         <div class="factor-name">{name}</div>
         {bar}
         <div class="factor-score" style="color:{c}">{_f(score,1)}/10</div>
-        <div class="factor-weight">{weight} → {_f(contr,2)}</div>
+        <div class="factor-weight">{w*100:g}% → {_f(contr,2)}</div>
       </div>""")
 
     # 主矛盾 / 叙事 / 仓位推导（与 MD 第三章同源）
@@ -615,7 +665,7 @@ def _section_market(signal: Mapping[str, Any], composite: str, raw_score: float)
   <div class="section-title">市场主线</div>
   <div class="two-col">
     <div class="card">
-      <div style="font-size:12px;color:var(--text-dim);margin-bottom:14px;text-transform:uppercase;letter-spacing:.8px;">五因子评分 · 综合 <span style="font-size:20px;font-weight:700;color:var(--text-bright)">{raw_score:.2f}</span>/10</div>
+      <div style="font-size:12px;color:var(--text-dim);margin-bottom:14px;text-transform:uppercase;letter-spacing:.8px;">六因子评分 · 综合 <span style="font-size:20px;font-weight:700;color:var(--text-bright)">{raw_score:.2f}</span>/10</div>
       <div class="factor-grid">{''.join(rows)}</div>
       <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);display:flex;justify-content:space-between;font-size:12px;color:var(--text-dim);">
         <span>CAPE <b style="color:var(--text)">{_f(signal.get('cape'),1)}</b></span>
@@ -643,8 +693,10 @@ def _section_market(signal: Mapping[str, Any], composite: str, raw_score: float)
 
 
 def _section_allocation(portfolio: Mapping[str, Any], core_pct, sat_pct, cash_pct) -> str:
-    notes = portfolio.get("investment_notes") or []
-    notes_html = "".join(f'<li style="margin-bottom:6px;">{_e(n)}</li>' for n in notes[:5])
+    # 组合论点（不再展示 investment_notes——其内容与「行动计划」触发条件重复，已去重）
+    thesis = (portfolio.get("ai_decision") or {}).get("portfolio_thesis", "")
+    thesis_html = (f'<div style="margin-top:16px;font-size:13px;color:var(--text);line-height:1.8;">'
+                   f'<b style="color:var(--text-dim)">组合论点：</b>{_e(thesis)}</div>') if thesis else ""
 
     return f"""
 <div class="section">
@@ -660,7 +712,7 @@ def _section_allocation(portfolio: Mapping[str, Any], core_pct, sat_pct, cash_pc
       <div class="legend-item"><div class="legend-dot" style="background:var(--accent2)"></div>卫星 {sat_pct:.0f}%</div>
       <div class="legend-item"><div class="legend-dot" style="background:var(--text-dim)"></div>现金 {cash_pct:.0f}%</div>
     </div>
-    {'<ul style="margin-top:16px;padding-left:18px;font-size:13px;color:var(--text);line-height:1.8;">' + notes_html + '</ul>' if notes_html else ''}
+    {thesis_html}
   </div>
 </div>"""
 
@@ -706,10 +758,15 @@ def _section_funds(portfolio: Mapping[str, Any]) -> str:
 
         rat = rationales.get(code, {})
         conviction = {"high": "高", "medium": "中", "low": "低"}.get(rat.get("conviction_level", ""), "—")
-        reason_raw = rat.get("cycle_fit", "") or ""
-        reason = reason_raw[:80] + ("…" if len(reason_raw) > 80 else "")
-        risk_raw = rat.get("risk_note", "") or ""
-        risk_note = risk_raw[:80] + ("…" if len(risk_raw) > 80 else "")
+        # 静默失败发声：AI 给了别的基金理由却独漏此只 → 暴露缺口（与 MD 第五章同源）
+        if not rat and rationales:
+            reason = "⚠️ AI Phase2 未生成该基金理由"
+            risk_note = "⚠️ 缺失"
+        else:
+            reason_raw = rat.get("cycle_fit", "") or ""
+            reason = reason_raw[:80] + ("…" if len(reason_raw) > 80 else "")
+            risk_raw = rat.get("risk_note", "") or ""
+            risk_note = risk_raw[:80] + ("…" if len(risk_raw) > 80 else "")
 
         rows.append(f"""
     <tr>
@@ -761,15 +818,24 @@ def _section_alternates(portfolio: Mapping[str, Any]) -> str:
     if not alts:
         return ""
 
+    score_threshold = portfolio.get("score_threshold", 10)
+    selected = portfolio.get("core_funds", []) + portfolio.get("satellite_funds", [])
+    sel_scores = [float(s["total_score"]) for s in selected if s.get("total_score") is not None]
+    min_selected = min(sel_scores) if sel_scores else None
+
     rows = []
     for f in alts:
         code = str(f.get("fund_code", ""))
         name = f.get("fund_name", code)
         sc   = f.get("total_score") or f.get("score")
         c    = _score_color(sc)
-        note = ("角色重叠（宽基已满3席）"
-                if ("标普" in name or "S&P" in name or "全球" in name)
-                else "策略匹配稍低或换仓门槛未达")
+        # 真实原因：与已入选最低分比较，杜绝按名称猜测（与 MD 第六章同源）
+        if min_selected is None or sc is None:
+            note = "席位已由在持基金占据"
+        elif float(sc) > min_selected:
+            note = f"评分达标，但未超在持最低分 {min_selected:.0f} + 换仓门槛 {score_threshold:.0f} 分"
+        else:
+            note = f"综合分低于已入选基金（最低 {min_selected:.0f}）"
         rows.append(f"""
     <tr>
       <td><span style="font-family:monospace;font-size:12px;color:var(--text-dim)">{code}</span></td>
@@ -786,13 +852,13 @@ def _section_alternates(portfolio: Mapping[str, Any]) -> str:
 <div class="section">
   <div class="section-title">备选基金</div>
   <div class="card" style="padding:0;">
-    <div style="padding:14px 18px 0;font-size:12px;color:var(--text-dim);">以下基金综合评分优秀，但未入选本期组合（换仓门槛 10 分，或角色已由更高分基金占据）：</div>
+    <div style="padding:14px 18px 0;font-size:12px;color:var(--text-dim);">以下基金综合评分优秀，但未入选本期组合（换仓门槛 {score_threshold:.0f} 分，在持基金有优先保留权）：</div>
     <div class="table-wrap">
       <table>
         <thead><tr>
           <th>代码</th><th>基金名称</th><th class="td-center">综合分</th>
           <th class="td-right">绩效</th><th class="td-right">风险</th>
-          <th class="td-right">策略</th><th class="td-right">费率分</th><th>备注</th>
+          <th class="td-right">策略</th><th class="td-right">费率分</th><th>未入选原因</th>
         </tr></thead>
         <tbody>{''.join(rows)}</tbody>
       </table>
@@ -805,8 +871,20 @@ def _section_risk(portfolio: Mapping[str, Any], signal: Mapping[str, Any]) -> st
     vix = signal.get("vix") or 18
     credit = signal.get("credit_score") or 5
     all_f = portfolio.get("core_funds", []) + portfolio.get("satellite_funds", [])
-    ers = [float(f["expense_ratio"]) for f in all_f if f.get("expense_ratio") is not None]
-    avg_er = sum(ers) / len(ers) if ers else None
+    er_pairs = [
+        (float(f["expense_ratio"]), float(f.get("weight", 0) or 0))
+        for f in all_f if f.get("expense_ratio") is not None
+    ]
+    wsum = sum(w for _, w in er_pairs)
+    if er_pairs and wsum > 0:
+        avg_er = sum(er * w for er, w in er_pairs) / wsum
+        avg_er_is_weighted = True
+    elif er_pairs:
+        avg_er = sum(er for er, _ in er_pairs) / len(er_pairs)
+        avg_er_is_weighted = False
+    else:
+        avg_er = None
+        avg_er_is_weighted = False
 
     risks = [
         ("汇率风险", "QDII 资产以外币计价，人民币升值将直接冲击净值", "amber"),
@@ -851,7 +929,7 @@ def _section_risk(portfolio: Mapping[str, Any], signal: Mapping[str, Any]) -> st
       <div style="font-size:12px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.8px;margin-bottom:14px;">组合特征</div>
       <table><tbody>
         <tr><td style="color:var(--text-dim)">持仓基金数</td><td style="color:var(--text-bright);font-weight:700">{len(all_f)} 只</td></tr>
-        <tr><td style="color:var(--text-dim)">加权平均费率</td><td style="color:var(--text-bright);font-weight:700">{f"{avg_er*100:.2f}%" if avg_er else "—"}</td></tr>
+        <tr><td style="color:var(--text-dim)">{"加权平均费率" if avg_er_is_weighted else "平均费率（等权）"}</td><td style="color:var(--text-bright);font-weight:700">{f"{avg_er*100:.2f}%" if avg_er else "—"}</td></tr>
         <tr><td style="color:var(--text-dim)">VIX</td><td style="color:var(--{'red' if float(vix)>25 else 'amber' if float(vix)>18 else 'green'});font-weight:700">{_f(vix,1)}</td></tr>
         <tr><td style="color:var(--text-dim)">信用利差评分</td><td style="color:var(--{'red' if float(credit)<=3.5 else 'amber' if float(credit)<=5.5 else 'green'});font-weight:700">{_f(credit,1)}/10</td></tr>
       </tbody></table>
@@ -860,73 +938,65 @@ def _section_risk(portfolio: Mapping[str, Any], signal: Mapping[str, Any]) -> st
 </div>"""
 
 
-def _section_action(signal: Mapping[str, Any], portfolio: Mapping[str, Any]) -> str:
-    ai_dec = portfolio.get("ai_decision") or {}
-    notes  = ai_dec.get("position_sizing_notes") or []
-    trigs  = ai_dec.get("rebalance_triggers") or []
+def _action_caveat_html(portfolio: Mapping[str, Any]) -> str:
+    """行动计划复核块（HTML）：把审查发现的冲突贴在被质疑建议旁（A2，与 MD 同源）。"""
+    _verdict, _summary, findings = review_findings(portfolio)
+    actionable = [
+        f for f in findings
+        if f.get("category") in ("internal_inconsistency", "data_contradiction")
+        or f.get("severity") in ("high", "medium")
+    ]
+    if not actionable:
+        return ""
+    rows = []
+    for f in actionable:
+        cat = _CATEGORY_CN.get(f.get("category") or "", f.get("category") or "")
+        issue = _e((f.get("issue") or "")[:160])
+        fix = _e((f.get("suggested_fix") or "")[:120])
+        fix_html = (f'<div style="color:var(--text-dim);margin-top:2px;">↳ 建议修正：{fix}</div>'
+                    if fix else "")
+        rows.append(f'<li style="margin-bottom:8px;"><b style="color:var(--red)">[{_e(cat)}]</b> '
+                    f'{issue}{fix_html}</li>')
+    return (f'<div class="card" style="border-left:4px solid var(--red);'
+            f'background:rgba(229,72,77,.06);margin-top:14px;">'
+            f'<div style="font-weight:700;color:var(--red);margin-bottom:6px;">'
+            f'⚠️ 以下操作建议已被对抗审查标记，执行前须先复核</div>'
+            f'<ul style="margin:0;padding-left:18px;font-size:13px;line-height:1.7;'
+            f'color:var(--text);">{"".join(rows)}</ul></div>')
 
-    items = []
+
+def _section_action(signal: Mapping[str, Any], portfolio: Mapping[str, Any]) -> str:
+    """何时改变：触发条件的唯一出处（canonical_triggers 去重，与 MD 第四层同源）+ 复核块。"""
+    caveat = _action_caveat_html(portfolio)
+    triggers = canonical_triggers(signal, portfolio)
+    if not triggers:
+        return ""
+
     icons = ["↕", "↓", "↑", "⟳", "⚡", "📌"]
     icon_classes = ["trigger-vix", "trigger-credit", "trigger-signal",
                     "trigger-score", "trigger-vix", "trigger-signal"]
-
-    # 无 AI 决策时退回规则层行动条目（与 MD 第八章同源），避免本节空白
-    if not notes and not trigs:
-        rule_items = rule_action_items(signal, portfolio)
-        body = "".join(f"""
-    <li class="trigger-item">
-      <div class="trigger-icon {icon_classes[i % len(icon_classes)]}">{icons[i % len(icons)]}</div>
-      <div style="font-size:13px;color:var(--text);line-height:1.7">{_e(t)}</div>
-    </li>""" for i, t in enumerate(rule_items))
-        if not body:
-            return ""
-        return f"""
-<div class="section">
-  <div class="section-title">行动计划</div>
-  <div class="card">
-    <ul class="trigger-list">{body}</ul>
-    <div style="margin-top:14px;font-size:11px;color:var(--text-dim)">
-      以上条目由规则层生成（开启 AI 分析后将提供更精细的操作建议），下次更新后重新评估触发状态。
-    </div>
-  </div>
-</div>"""
-
-    for i, note in enumerate(notes[:4]):
+    items = []
+    for i, t in enumerate(triggers):
         cls = icon_classes[i % len(icon_classes)]
+        ico = icons[i % len(icons)]
         items.append(f"""
     <li class="trigger-item">
-      <div class="trigger-icon {cls}">{icons[i % len(icons)]}</div>
-      <div style="font-size:13px;color:var(--text);line-height:1.7">{_e(note)}</div>
+      <div class="trigger-icon {cls}">{ico}</div>
+      <div style="font-size:13px;color:var(--text);line-height:1.7">{_e(t)}</div>
     </li>""")
 
-    for i, trig in enumerate(trigs[:4]):
-        cond   = trig.get("condition", "")
-        action = trig.get("action", "")
-        if not cond or not action:
-            continue
-        cls = icon_classes[(i + len(notes)) % len(icon_classes)]
-        items.append(f"""
-    <li class="trigger-item">
-      <div class="trigger-icon {cls}">!</div>
-      <div style="font-size:13px;line-height:1.7">
-        <span style="color:var(--text-dim)">触发：</span><span style="color:var(--text)">{_e(cond)}</span>
-        <span style="color:var(--border2);margin:0 6px">→</span>
-        <span style="color:var(--accent);font-weight:600">{_e(action)}</span>
-      </div>
-    </li>""")
-
-    if not items:
-        return ""
-
+    ai_on = bool((portfolio.get("ai_decision") or {}).get("rebalance_triggers"))
+    src = "AI Phase 2" if ai_on else "规则层"
     return f"""
 <div class="section">
   <div class="section-title">行动计划</div>
   <div class="card">
     <ul class="trigger-list">{''.join(items)}</ul>
     <div style="margin-top:14px;font-size:11px;color:var(--text-dim)">
-      以上条目由 AI Phase 2 生成，基于当期量化数据，下次更新后重新评估触发状态。
+      条目由{src}生成，基于当期量化数据，下次更新后重新评估触发状态。
     </div>
   </div>
+  {caveat}
 </div>"""
 
 
@@ -935,9 +1005,10 @@ def _section_scenario(portfolio: Mapping[str, Any]) -> str:
     sc     = ai_dec.get("scenario_analysis") or {}
     if not any([sc.get("bull_case"), sc.get("base_case"), sc.get("bear_case")]):
         return ""
-    bull   = format_scenario_case(sc.get("bull_case"))
-    base   = format_scenario_case(sc.get("base_case"))
-    bear   = format_scenario_case(sc.get("bear_case"))
+    # include_actions=False：情景只说「会怎样」，具体操作收归「行动计划」唯一出处（与 MD 同源去重）
+    bull   = format_scenario_case(sc.get("bull_case"), include_actions=False)
+    base   = format_scenario_case(sc.get("base_case"), include_actions=False)
+    bear   = format_scenario_case(sc.get("bear_case"), include_actions=False)
 
     def _clip(s, n=200):
         clipped = (s or "")[:n] + ("…" if len(s or "") > n else "")
