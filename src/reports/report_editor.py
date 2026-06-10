@@ -7,7 +7,8 @@
 设计原则：
 - 只做**去重 / 统一 / 排序 / 截断**，不改任何数字、不调用 LLM（遵守纪律 #2）。
 - AI 的 `rebalance_triggers` 若存在则优先（更精细），否则退回规则层 `rule_action_items`。
-- 与对抗审查（Phase3）的衔接由 report_builder 的 review_* 系列负责，本模块不重复。
+- 与对抗审查（Phase3）的衔接由 html_report_builder 的 _review_banner_html /
+  _action_caveat_html / _section_adversarial 负责，本模块不重复。
 """
 from __future__ import annotations
 

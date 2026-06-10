@@ -33,6 +33,7 @@ class StopLossResult(TypedDict, total=False):
     period_return_pct: float
     funds_tracked: int
     note: str
+    next_nav_state: dict[str, float]
 
 
 class PortfolioState(TypedDict):
@@ -152,6 +153,8 @@ class _PortfolioCore(TypedDict):
 class PortfolioRecommendation(_PortfolioCore, total=False):
     """build_portfolio_recommendation() 的返回结构（核心必填 + 可选扩展）。"""
     score_threshold: float           # 换仓门槛分（报告层「未入选原因」据此说明）
+    index_only: bool                 # 最终推荐是否仅允许指数化产品
+    allocation_shortfall_pct: float # 因无合格标的而转入现金的目标仓位
     ai_decision: dict[str, Any]      # 仅 AI 阶段二开启且 phase1 成功时存在
     adversarial_review: Optional[dict[str, Any]]  # 仅 Phase3 对抗审查开启且有结果时存在
     # ── 状态所有权（阶段1）：由编排层读入/提交，报告层据此对比，不再各自读盘 ──

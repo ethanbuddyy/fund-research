@@ -4,11 +4,12 @@ from collections.abc import Mapping
 import pandas as pd
 from ..utils.database import read_table
 from ..utils.config import load_config
+from ..utils.fund_universe import is_index_fund
 from ..domain.types import MarketSignal, PortfolioRecommendation, PortfolioState
 
 
 CORE_BENCHMARKS = ["标普500", "S&P", "纳斯达克100", "MSCI全球", "全球"]
-SATELLITE_BENCHMARKS = ["科技", "医疗", "能源", "亚洲", "主动"]
+SATELLITE_BENCHMARKS = ["科技", "医疗", "能源", "亚洲", "油气", "黄金", "日本", "欧洲"]
 
 
 def build_portfolio_recommendation(
@@ -64,6 +65,17 @@ def select_portfolio(
         on="fund_code", how="left", suffixes=("", "_info")
     )
     merged = merged.sort_values("total_score", ascending=False)
+    index_only = config.get("portfolio", {}).get("index_only", True)
+    if index_only:
+        index_mask = merged.apply(
+            lambda row: is_index_fund(
+                fund_code=row.get("fund_code", ""),
+                fund_type=row.get("fund_type", ""),
+                fund_name=row.get("fund_name", ""),
+            ),
+            axis=1,
+        )
+        merged = merged[index_mask].copy()
 
     core_alloc = market_signal.get("core_allocation", 0.60)
     satellite_alloc = market_signal.get("satellite_allocation", 0.30)
@@ -74,24 +86,32 @@ def select_portfolio(
 
     # 核心仓位：宽基指数
     core_funds = _select_core_funds(merged, core_alloc, prev_core_scores, score_threshold)
-    # 卫星仓位：行业/主动/主题
+    # 卫星仓位：行业/主题/区域指数
     satellite_funds = _select_satellite_funds(merged, satellite_alloc,
                                               exclude_codes={f["fund_code"] for f in core_funds},
                                               prev_scores=prev_sat_scores,
                                               score_threshold=score_threshold)
 
-    total_invested = core_alloc + satellite_alloc
+    actual_core_pct = round(sum(float(f.get("weight") or 0) for f in core_funds), 1)
+    actual_satellite_pct = round(sum(float(f.get("weight") or 0) for f in satellite_funds), 1)
+    actual_invested_pct = round(actual_core_pct + actual_satellite_pct, 1)
+    actual_cash_pct = round(max(0.0, 100.0 - actual_invested_pct), 1)
+    target_invested_pct = round((core_alloc + satellite_alloc) * 100, 1)
     portfolio: PortfolioRecommendation = {
         "composite_signal": market_signal.get("composite_signal"),
-        "core_allocation_pct": round(core_alloc * 100, 0),
-        "satellite_allocation_pct": round(satellite_alloc * 100, 0),
-        "cash_allocation_pct": round(cash_alloc * 100, 0),
+        "core_allocation_pct": actual_core_pct,
+        "satellite_allocation_pct": actual_satellite_pct,
+        "cash_allocation_pct": actual_cash_pct,
         "core_funds": core_funds,
         "satellite_funds": satellite_funds,
-        "total_invested_pct": round(total_invested * 100, 0),
+        "total_invested_pct": actual_invested_pct,
         "top_picks": merged.head(top_n).to_dict("records"),
         "investment_notes": _generate_notes(market_signal),
         "score_threshold": score_threshold,  # 报告层「未入选原因」据此说明，避免猜测
+        "index_only": index_only,
+        "allocation_shortfall_pct": round(
+            max(0.0, target_invested_pct - actual_invested_pct), 1
+        ),
         # 上期快照原文：供报告层「换仓变动」对比（报告层不再读盘），首次运行为 None
         "previous_portfolio": previous_portfolio,
     }
@@ -182,7 +202,7 @@ def _build_snapshot_payload(core_funds: list, satellite_funds: list,
     """构造本期推荐快照数据（代码+评分+权重+净值），**不写盘**。
 
     返回的 dict 由编排层在所有「与上期对比」展示数据计算完成后，经
-    portfolio_state_store.save_current_portfolio 统一提交（止损追踪与换仓门槛共用）。
+    portfolio_state_store.commit_runtime_state 统一提交（止损追踪与换仓门槛共用）。
     """
     from datetime import datetime as _dt
     score_map = dict(zip(scores_df["fund_code"].astype(str), scores_df["total_score"].astype(float)))
@@ -215,9 +235,13 @@ def _select_core_funds(df: pd.DataFrame, alloc: float,
 
 def _select_satellite_funds(df: pd.DataFrame, alloc: float, exclude_codes: set,
                              prev_scores: dict, score_threshold: float) -> list:
-    """选取卫星仓位（行业/主动/主题，最多2只）。"""
+    """选取卫星仓位（行业/主题/区域指数，最多2只）。"""
     sat = df[~df["fund_code"].isin(exclude_codes)]
-    pool = sat[sat["fund_type"].str.contains("主动|LOF|行业|主题", na=False)]
+    satellite_pattern = "|".join(SATELLITE_BENCHMARKS)
+    pool = sat[
+        sat["fund_name"].str.contains(satellite_pattern, na=False)
+        | sat["fund_type"].str.contains("ETF|指数|被动|增强", na=False)
+    ]
     if pool.empty:
         pool = sat
     return _select_funds(pool, alloc, max_n=2, prev_scores=prev_scores,
@@ -237,6 +261,7 @@ def _select_funds(pool: pd.DataFrame, alloc: float, max_n: int,
         selected = candidate_codes[:max_n]
     else:
         selected = [c for c in prev_scores if c in candidate_codes][:max_n]
+        selected_scores = {c: prev_scores.get(c, 0.0) for c in selected}
         for code in candidate_codes:
             if code in selected:
                 continue
@@ -246,13 +271,17 @@ def _select_funds(pool: pd.DataFrame, alloc: float, max_n: int,
             score = float(score_series.iloc[0])
             if len(selected) < max_n:
                 selected.append(code)
+                selected_scores[code] = score
             else:
-                min_code = min(selected, key=lambda c: prev_scores.get(c, 0.0))
-                if score >= prev_scores.get(min_code, 0.0) + score_threshold:
+                min_code = min(selected, key=lambda c: selected_scores.get(c, 0.0))
+                if score >= selected_scores.get(min_code, 0.0) + score_threshold:
                     selected.remove(min_code)
+                    selected_scores.pop(min_code, None)
                     selected.append(code)
-            if len(selected) >= max_n:
-                break
+                    selected_scores[code] = score
+                else:
+                    # 候选按总分降序；当前候选失败后，后续候选也无法跨过门槛。
+                    break
 
     picks = pool[pool["fund_code"].astype(str).isin(selected)].head(max_n)
     n = len(picks)
@@ -288,7 +317,7 @@ def _generate_notes(market_signal: Mapping[str, Any]) -> list[str]:
         notes.append("市场信号积极，可适当提高股票仓位，加配成长型QDII")
         notes.append("博格策略：维持定投，市场上涨中持续积累份额")
     elif signal == "标配稳健":
-        notes.append("市场处于合理区间，维持标配，核心指数基金为主")
+        notes.append("市场处于合理区间，维持标配，组合仅使用指数基金以降低风格漂移")
         notes.append("格雷厄姆提示：当前估值中性，逢回调加仓更佳")
     elif signal == "谨慎防守":
         notes.append("市场存在隐忧，降低卫星仓比例，提高现金储备")
@@ -320,12 +349,19 @@ def _generate_notes(market_signal: Mapping[str, Any]) -> list[str]:
 def _empty_portfolio(market_signal: MarketSignal) -> PortfolioRecommendation:
     return {
         "composite_signal": market_signal.get("composite_signal", "标配稳健"),
-        "core_allocation_pct": 60,
-        "satellite_allocation_pct": 30,
-        "cash_allocation_pct": 10,
+        "core_allocation_pct": 0,
+        "satellite_allocation_pct": 0,
+        "cash_allocation_pct": 100,
         "core_funds": [],
         "satellite_funds": [],
-        "total_invested_pct": 90,
+        "total_invested_pct": 0,
         "top_picks": [],
-        "investment_notes": ["数据采集中，请先运行数据更新"],
+        "investment_notes": ["无合格基金可供配置，未分配仓位全部保留为现金"],
+        "allocation_shortfall_pct": round(
+            (
+                market_signal.get("core_allocation", 0.60)
+                + market_signal.get("satellite_allocation", 0.30)
+            ) * 100,
+            1,
+        ),
     }

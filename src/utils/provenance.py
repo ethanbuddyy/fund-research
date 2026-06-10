@@ -26,9 +26,10 @@ PARTIAL = "partial"  # 部分真实（如估值用了价格近似）
 MOCK = "mock"        # 随机模拟，仅供界面演示，不可用于决策
 
 _PRIORITY = {REAL: 0, PARTIAL: 1, MOCK: 2}
+_FAILED_RECORDS: set[str] = set()
 
 
-def record(source: str, mode: str, rows: int = 0, detail: str = "") -> None:
+def record(source: str, mode: str, rows: int = 0, detail: str = "") -> bool:
     """记录某数据源本次采集的模式。source 如 macro/market/fund/valuation。"""
     try:
         conn = get_connection()
@@ -42,10 +43,14 @@ def record(source: str, mode: str, rows: int = 0, detail: str = "") -> None:
                 (source, mode, int(rows), detail),
             )
             conn.commit()
+            _FAILED_RECORDS.discard(source)
+            return True
         finally:
             conn.close()  # 异常路径也要关连接，避免句柄泄漏
-    except Exception:
-        pass  # provenance 记录失败不应影响主流程
+    except Exception as e:
+        _FAILED_RECORDS.add(source)
+        print(f"[WARN] provenance 写入失败，{source} 本次按 mock/unknown 处理: {e}")
+        return False
 
 
 def read_all() -> dict:
@@ -54,9 +59,21 @@ def read_all() -> dict:
         conn = get_connection()
         try:
             cur = conn.execute("SELECT source, mode, rows, detail, updated_at FROM collection_meta")
-            return {r["source"]: {"mode": r["mode"], "rows": r["rows"],
-                                  "detail": r["detail"], "updated_at": r["updated_at"]}
-                    for r in cur.fetchall()}
+            result = {
+                r["source"]: {
+                    "mode": r["mode"], "rows": r["rows"],
+                    "detail": r["detail"], "updated_at": r["updated_at"],
+                }
+                for r in cur.fetchall()
+            }
+            for source in _FAILED_RECORDS:
+                result[source] = {
+                    "mode": MOCK,
+                    "rows": 0,
+                    "detail": "本次 provenance 写入失败，真实性未知",
+                    "updated_at": None,
+                }
+            return result
         finally:
             conn.close()  # 异常路径也要关连接，避免句柄泄漏
     except Exception:
@@ -101,7 +118,7 @@ def check_staleness(max_days: dict | None = None) -> list[str]:
             if delta > max_d:
                 warnings.append(f"{src} 数据已 {delta} 天未更新（阈值 {max_d} 天）")
         except Exception:
-            pass
+            warnings.append(f"{src} 更新时间格式无效，按过期处理")
     return warnings
 
 
@@ -315,7 +332,7 @@ def cache_get(source: str, source_id: str = "", *, config_hash: str = "",
             if (datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) - last).total_seconds() > max_age_days * 86400:
                 return None
         except Exception:
-            pass
+            return None
 
     path = _snapshot_path(source, stored_data_hash)        # ⑤ 读回快照
     if not path.exists():

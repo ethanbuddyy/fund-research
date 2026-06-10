@@ -11,7 +11,6 @@ from unittest.mock import patch
 import pytest
 
 from src.ai import phase3_adversarial_reviewer as p3
-from src.reports import report_builder as md
 from src.reports import html_report_builder as h
 
 
@@ -109,19 +108,16 @@ def _review_with_xss():
     }
 
 
-class TestMarkdownRendering:
-    def test_absent_review_renders_empty(self):
-        assert md._s11_adversarial_review({}) == ""
-
-    def test_present_review_rendered(self):
-        out = md._s11_adversarial_review({"adversarial_review": _review_with_xss()})
+class TestHtmlRenderingEscaped:
+    # 主报告已仅 HTML，对抗审查的渲染回归由本类（HTML）唯一守护；
+    # 标签/类别中文 + XSS 转义一并断言（原 MD 渲染测试已废止）。
+    def test_present_review_labels_rendered(self):
+        out = h._section_adversarial({"adversarial_review": _review_with_xss()})
         assert "AI 对抗审查" in out
         assert "实质问题" in out         # material_concerns 标签
         assert "与数据矛盾" in out        # 类别中文
         assert "VIX" in out
 
-
-class TestHtmlRenderingEscaped:
     def test_absent_review_renders_empty(self):
         assert h._section_adversarial({}) == ""
 

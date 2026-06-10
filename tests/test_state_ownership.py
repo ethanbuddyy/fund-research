@@ -67,6 +67,7 @@ class TestPortfolioStateStore:
         import src.utils.portfolio_state_store as store
         monkeypatch.setattr(store, "_SNAPSHOT_PATH", tmp_path / "snap.json")
         monkeypatch.setattr(store, "_NAV_PATH", tmp_path / "nav.json")
+        monkeypatch.setattr(store, "_RUNTIME_PATH", tmp_path / "runtime.json")
         return store
 
     def test_first_run_returns_defaults(self, monkeypatch, tmp_path):
@@ -82,6 +83,22 @@ class TestPortfolioStateStore:
 
         store.save_nav_state(105.0, 110.0)
         assert store.load_nav_state() == {"nav": 105.0, "hwm": 110.0}
+
+    def test_atomic_runtime_commit_updates_snapshot_and_nav_together(
+        self, monkeypatch, tmp_path
+    ):
+        store = self._patch_paths(monkeypatch, tmp_path)
+        snapshot = {
+            "date": "2026-06-10",
+            "core": {"A": {"score": 80.0}},
+            "satellite": {},
+        }
+
+        assert store.commit_runtime_state(
+            snapshot, {"nav": 95.0, "hwm": 110.0}
+        )
+        assert store.load_previous_portfolio() == snapshot
+        assert store.load_nav_state() == {"nav": 95.0, "hwm": 110.0}
 
     def test_corrupt_snapshot_warns_not_silent(self, monkeypatch, tmp_path, capsys):
         store = self._patch_paths(monkeypatch, tmp_path)
@@ -152,7 +169,7 @@ def test_build_does_not_write_snapshot_returns_payload(monkeypatch, tmp_path):
 
 def test_change_note_uses_in_memory_previous():
     """上期 A/B、本期 B/C → 报告显示新增 C、移除 A，且不读盘。"""
-    from src.reports.report_builder import _snapshot_change_note
+    from src.reports.report_model import _snapshot_change_note
     portfolio = {
         "core_funds": [{"fund_code": "B"}],
         "satellite_funds": [{"fund_code": "C"}],
@@ -164,7 +181,7 @@ def test_change_note_uses_in_memory_previous():
 
 
 def test_change_note_first_run_no_previous():
-    from src.reports.report_builder import _snapshot_change_note
+    from src.reports.report_model import _snapshot_change_note
     note = _snapshot_change_note({"core_funds": [], "satellite_funds": [],
                                   "previous_portfolio": None})
     assert "首次运行" in note
@@ -220,7 +237,7 @@ def test_db_signal_equals_returned_signal_after_stop_loss(monkeypatch):
         "src.utils.portfolio_state_store.load_previous_portfolio", lambda *a, **k: None
     )
     monkeypatch.setattr(
-        "src.utils.portfolio_state_store.save_current_portfolio", lambda *a, **k: None
+        "src.utils.portfolio_state_store.commit_runtime_state", lambda *a, **k: None
     )
     saved = {}
     monkeypatch.setattr(
@@ -240,7 +257,7 @@ def test_db_signal_equals_returned_signal_after_stop_loss(monkeypatch):
             signal["cash_allocation"]) == POSITION_TIERS["减仓防守"]
 
 
-def test_save_current_portfolio_committed_after_build(monkeypatch):
+def test_runtime_state_committed_after_build(monkeypatch):
     """快照提交发生在组合构建之后（携带 snapshot_payload），且只提交一次。"""
     for mod, attr, fn in _UPSTREAM_NOOPS:
         monkeypatch.setattr(f"{mod}.{attr}", fn)
@@ -263,10 +280,12 @@ def test_save_current_portfolio_committed_after_build(monkeypatch):
     )
     committed = []
     monkeypatch.setattr(
-        "src.utils.portfolio_state_store.save_current_portfolio",
-        lambda snap: committed.append(snap),
+        "src.utils.portfolio_state_store.commit_runtime_state",
+        lambda snap, nav=None: committed.append((snap, nav)),
     )
 
     from src.application.update_pipeline import run_update
     run_update()
-    assert committed == [{"core": {"X": {}}, "satellite": {}}], "本期快照应在 build 之后恰好提交一次"
+    assert committed == [
+        ({"core": {"X": {}}, "satellite": {}}, None)
+    ], "本期快照与止损净值应在 build 之后恰好提交一次"

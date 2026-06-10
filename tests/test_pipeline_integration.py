@@ -364,7 +364,7 @@ class TestStopLossOrderingInvariant:
             "src.utils.portfolio_state_store.load_previous_portfolio", lambda *a, **k: None
         )
         monkeypatch.setattr(
-            "src.utils.portfolio_state_store.save_current_portfolio", lambda *a, **k: None
+            "src.utils.portfolio_state_store.commit_runtime_state", lambda *a, **k: None
         )
         monkeypatch.setattr(
             "src.recommender.signals.save_market_signal", lambda *a, **k: None

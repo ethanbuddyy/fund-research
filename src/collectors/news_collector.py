@@ -129,14 +129,15 @@ def _fetch_alphavantage(api_key: str, today: str) -> dict | None:
 
     try:
         import requests
+        params: dict[str, str | int] = {
+            "function": "NEWS_SENTIMENT",
+            "topics": "financial_markets,economy_macro",
+            "limit": 50,
+            "apikey": api_key,
+        }
         resp = requests.get(
             "https://www.alphavantage.co/query",
-            params={
-                "function": "NEWS_SENTIMENT",
-                "topics":   "financial_markets,economy_macro",
-                "limit":    50,
-                "apikey":   api_key,
-            },
+            params=params,
             timeout=15,
         )
         resp.raise_for_status()

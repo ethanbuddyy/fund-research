@@ -70,3 +70,85 @@ class TestParseNav:
         js = self._js(f'[{{"x": {ms}, "y": 1.5, "equityReturn": ""}}]')
         rows = em._parse_nav(js, "001")
         assert rows[0][4] is None
+
+
+# ─────────────────────────────────────────────────────────────
+# 畸形/缺失输入的降级路径（issue #6）——这些解析点过去靠 except 兜底但无专测
+# ─────────────────────────────────────────────────────────────
+
+class TestParseHoldings:
+    def test_all_vars_missing_returns_none(self):
+        assert em._parse_holdings("var Unrelated = 1;", "001") is None
+
+    def test_partial_stock_codes_only(self):
+        js = 'var stockCodes = ["600519", "000858"];'
+        out = em._parse_holdings(js, "001")
+        assert out is not None
+        assert out["stock_codes"] == "600519,000858"
+        assert out["date"]  # 缺日期时回填当天，不为 None
+
+    def test_non_numeric_ratio_skipped_not_crash(self):
+        js = ('var Data_assetAllocation = {"categories":["2026"],'
+              '"series":[{"name":"股票占净比","data":["N/A"]}]};')
+        # 唯一可解析项是非数字 → 跳过 → 整体无有效数据 → None
+        assert em._parse_holdings(js, "001") is None
+
+    def test_numeric_ratio_parsed(self):
+        js = ('var Data_assetAllocation = {"categories":["2026Q1"],'
+              '"series":[{"name":"股票占净比","data":[88.5]},'
+              '{"name":"债券占净比","data":[5.0]}]};')
+        out = em._parse_holdings(js, "001")
+        assert out["stock_ratio"] == 88.5 and out["bond_ratio"] == 5.0
+        assert out["date"] == "2026Q1"
+
+
+class TestParseTurnover:
+    def test_missing_var_returns_empty(self):
+        assert em._parse_turnover("var X = 1;", "001") == []
+
+    def test_pair_list_format(self):
+        out = em._parse_turnover('var hsltList = [["2024", 1.23], ["2025", 2.5]];', "001")
+        assert {r["year"] for r in out} == {2024, 2025}
+        assert out[0]["turnover_rate"] == 1.23
+
+    def test_dict_format(self):
+        out = em._parse_turnover('var hsltList = [{"year": "2023", "value": 0.8}];', "001")
+        assert out == [{"fund_code": "001", "year": 2023, "turnover_rate": 0.8}]
+
+    def test_out_of_range_year_and_bad_values_skipped(self):
+        js = 'var hsltList = [["1800", 1.0], ["2024", "bad"], ["2025", 3.3]];'
+        out = em._parse_turnover(js, "001")
+        assert out == [{"fund_code": "001", "year": 2025, "turnover_rate": 3.3}]
+
+
+class TestParseFeeSplit:
+    def test_missing_returns_none(self):
+        assert em._parse_fee_split("var Nothing = 1;", "001") is None
+
+    def test_dict_manage_fee(self):
+        js = 'var feeInfo = {"manageFee": "0.75%", "trustFee": "0.25%"};'
+        out = em._parse_fee_split(js, "001")
+        assert out["mgmt_fee"] == 0.0075 and out["custody_fee"] == 0.0025
+
+    def test_regex_fallback_from_js_text(self):
+        js = "其它文本… 管理费率：1.50% 托管费率：0.30% …"
+        out = em._parse_fee_split(js, "001")
+        # 兜底正则命中管理费率（先匹配者返回）
+        assert out is not None
+        assert out["mgmt_fee"] == 0.015
+
+
+class TestParseRateStr:
+    def test_percent_string(self):
+        assert em._parse_rate_str("0.75%") == 0.0075
+
+    def test_already_decimal(self):
+        assert em._parse_rate_str(0.0075) == 0.0075
+
+    def test_percent_number_normalized(self):
+        # >0.1 视为百分比形式 → 除以 100
+        assert em._parse_rate_str(0.75) == 0.0075
+
+    def test_none_and_garbage(self):
+        assert em._parse_rate_str(None) is None
+        assert em._parse_rate_str("暂无") is None

@@ -12,7 +12,7 @@ config/settings.yaml + src/domain/factor_config.py   ← 指标字典/权重(唯
   → src/collectors/        采集层:FRED宏观 / World Bank·OECD / yfinance行情 / 估值 / 天天基金 / Baostock ETF
   → src/analyzers/         分析层:宏观周期 / 估值 / 情绪 / 叙事 / 基金绩效
   → src/recommender/       决策层:signals → scorer → portfolio(产出 signal/scores_df/portfolio)
-  → src/reports/           报告层:report_builder(MD) + html_report_builder(HTML)
+  → src/reports/           报告层:html_report_builder(主报告 HTML) + report_builder(单基金/持仓诊断 MD)
   → reports/  +  /mnt/e/WSL-output/
 ```
 
@@ -26,7 +26,7 @@ config/settings.yaml + src/domain/factor_config.py   ← 指标字典/权重(唯
 | 分析 | `src/analyzers/` `src/analysis/` | 周期/估值/情绪/叙事/单基金研判 |
 | 决策 | `src/recommender/` | 六因子信号、基金评分、核心-卫星组合 |
 | AI 增强 | `src/ai/` | 三阶段决策,**LLM 调用全部隔离在此** |
-| 报告 | `src/reports/` | 读 signal/portfolio → MD + HTML,只读不回算 |
+| 报告 | `src/reports/` | 读 signal/portfolio → 主报告 HTML(单基金/持仓诊断另出 MD),只读不回算 |
 | 检索 | `src/retrieval/` | BM25 词法检索(可升级 embedding);沉淀语料(`documents` 表)+ `--recall` 语义搜索 + RAG 注入 |
 | 回测 | `src/backtester/engine.py` | 走向前回测(无前视),`backtest.py` 独立入口 |
 | 溯源 | `src/utils/provenance.py` | REAL/PARTIAL/MOCK 记录与聚合 |
@@ -59,13 +59,18 @@ phase1 嵌在 `recommender/signals.py`,**phase2 与 phase3 均在 `recommender/p
 
 **报告三层结构(2026-06 重构,改报告前必读)** —— 正文四层:① 本期决策 ② 为什么(证据)
 ③ 买什么·卖什么 ④ 何时改变;数据可信度/备选池/回测/算法参数/对抗审查全文收进**折叠
-审计附录**(`<details>`)。MD(`report_builder.py`)与 HTML(`html_report_builder.py`)**结构同源**,
-改一边须同步另一边。两条新不变量:
+审计附录**(`<details>`)。**主报告仅 HTML(`html_report_builder.py`)**——2026-06 起废止
+Markdown 孪生,从根上消除「MD/HTML 双实现需人工同步」的维护负担(横幅/复核块/审计附录
+全表为 HTML 内 `_review_banner_html`/`_action_caveat_html`/`_section_adversarial`)。
+`report_builder.py` 现仅承载**两类单一实现、无 HTML 孪生**的诊断报告:`build_fund_report`
+(`--analyze`)与 `build_holdings_report`(`--check-holdings`),它们不参与上述同步问题。
+跨渲染器共享口径仍统一在 `report_model.py`(单一真相源)。两条不变量:
 (a) **六因子表权重必取 `factor_config.FACTOR_WEIGHTS`**,禁止硬编码,且须含 `global_macro`——
-否则用户算不平综合分(回归 `tests/test_report_builder.py::TestA1SixFactorTable`)。
+否则用户算不平综合分(回归 `tests/test_html_report.py::TestA1SixFactorTable`)。
 (b) **触发条件单一真相源 `report_editor.canonical_triggers`**:正文「何时改变」是唯一整列出处,
 首页只放 `headline_triggers`(最关键 1 条)+提示;情景表用 `format_scenario_case(.., include_actions=False)`
-只说「会怎样」,不重复操作。改触发渲染勿在各处各写一遍(回归 `TestThreeLayerStructure`)。
+只说「会怎样」,不重复操作。改触发渲染勿在各处各写一遍(回归
+`tests/test_html_report.py::TestThreeLayerStructure`)。
 
 **4. 溯源必含 + 内容哈希缓存** —— 两层都在 `src/utils/provenance.py`:
 (a) 模式溯源:`record(source, mode)` 标注 real/partial/mock,`overall_mode()` 聚合
@@ -114,7 +119,7 @@ phase1 嵌在 `recommender/signals.py`,**phase2 与 phase3 均在 `recommender/p
 
 | 命令 | 用途 |
 |------|------|
-| `python3 run.py` | 完整流程:采集→信号→评分→组合→报告(MD+HTML) |
+| `python3 run.py` | 完整流程:采集→信号→评分→组合→报告(HTML) |
 | `python3 run.py --backtest` | 附带走向前回测(注入报告第九章) |
 | `python3 run.py --analyze <代码或名称>` | 单基金综合研判 |
 | `python3 run.py --search <关键词>` | 基金代码搜索 |

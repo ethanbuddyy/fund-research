@@ -4,12 +4,12 @@
 
 **QDII 基金量化投研平台** · 自动采集 → 信号生成 → 评分组合 → 投研报告 → 持仓诊断
 
-[![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python&logoColor=white)](https://python.org)
+[![Python](https://img.shields.io/badge/Python-3.11%2B-blue?logo=python&logoColor=white)](https://python.org)
 [![Data](https://img.shields.io/badge/数据源-FRED%20%7C%20multpl%20%7C%20yfinance%20%7C%20天天基金-green)](#二数据接口)
 [![AI](https://img.shields.io/badge/AI%20增强-Phase1%2F2%2F3%20(含对抗审查)-orange?logo=anthropic)](https://anthropic.com)
 [![MCP](https://img.shields.io/badge/MCP-4%20服务器-purple)](#三mcp-决策分析扩展)
-[![Tests](https://img.shields.io/badge/Tests-257%20passing-brightgreen?logo=pytest)](#tests)
-[![Report](https://img.shields.io/badge/报告-Markdown%20%2B%20HTML-informational)](#4-投研报告10-章节)
+[![Tests](https://img.shields.io/badge/Tests-356%20passing-brightgreen?logo=pytest)](#七已实现功能)
+[![Report](https://img.shields.io/badge/报告-HTML-informational)](#4-投研报告四层正文--审计附录)
 
 > ⚠️ **免责声明**：本系统仅供研究与学习，所有输出不构成投资建议。投资有风险，决策需自负。
 
@@ -58,10 +58,10 @@
 | 基金评分 | 5 维**类别内相对**百分位打分（绩效/风险/策略匹配/成本/一致性），择时不参与单基金排名，避免双重计算 |
 | 组合与风控 | 核心-卫星配置 + 换仓门槛 + 回撤止损 + 个人风险偏好调节 |
 | 回测验证 | **走向前回测**（无前视偏差）+ 四基准对比 + 因子归因 + 幸存者偏差修正对照组 |
-| 报告产出 | Markdown + HTML 双格式 10 章节报告，含结论、证据链、行动计划与数据可信度披露 |
-| 可选增强 | Claude 两阶段 AI 分析（市场解析 + 投资决策）；为 Claude Code 提供 4 个 MCP 服务器做对话式研判 |
+| 报告产出 | HTML 投研报告，按决策、证据、持仓、触发条件分层，并附可折叠审计附录 |
+| 可选增强 | AI 三阶段分析（市场解析 + 投资决策 + 对抗审查）；为 Claude Code 提供 4 个 MCP 服务器做对话式研判 |
 
-**技术栈**：Python 3.10+ · pandas / numpy / scipy · SQLite 本地存储 · 纯函数化的评分核心（`src/domain/scoring.py`，生产与回测共用同一实现）· 可选 anthropic / openai SDK（支持 Claude / DeepSeek / OpenAI 后端）。
+**技术栈**：Python 3.11+ · pandas / numpy / scipy · SQLite 本地存储 · 纯函数化的评分核心（`src/domain/scoring.py`，生产与回测共用同一实现）· 可选 anthropic / openai SDK（支持 Claude / DeepSeek / OpenAI 后端）。
 
 ### 核心亮点
 
@@ -78,6 +78,9 @@
 | 🔢 **LLM 不造数字（量化纪律落地）** | 系统算不出的指标（情景收益率/alpha/回撤/发生概率/beta）禁止 LLM 编造，只许引用输入中已有的量化事实；情景仓位更进一步——LLM 只选「目标档位」（4 档枚举）与基金调整方向，**绝对百分比由确定性档位表 `POSITION_TIERS` 填充**，从根上消除「多基金权重相加对不齐」的算术矛盾 |
 | 📖 **数据字典防口径漂移** | 表/字段语义集中文档化，尤其高危「字段复用」约定（如 `fund_manager.return_3y` 实存任期收益）；测试强制文档与 schema 白名单同步，改表不更文档即 CI 变红 |
 | 🔎 **语义检索 + RAG 增强** | 把「用完即弃」文本（市场叙事/区域展望/单基金研判）、新闻原文、历史报告沉淀为可检索语料（`documents` 表，内容寻址去重）；BM25 词法检索零新依赖，经 `Retriever` 协议封装可平滑升级 embedding；`--recall` 独立语义搜索 + 检索证据注入 AI 三阶段 prompt（开关门控，关闭则 prompt 与现状逐字一致）|
+| 🔐 **不可信证据隔离** | RAG 召回内容以结构化、不可信证据块注入，系统提示禁止执行语料中的角色设定、工具请求或覆盖指令，降低历史文本与外部新闻造成的 prompt injection 风险 |
+| 💾 **运行状态原子提交** | 组合快照与止损净值统一写入 `portfolio_runtime_state.json`，通过同目录临时文件 + `os.replace` 一次替换，避免进程中断导致跨期状态错位 |
+| 📦 **可复现工程环境** | Python 3.11+；运行依赖使用带哈希的 `requirements.lock`，开发工具独立在 `requirements-dev.txt`，CI 同时覆盖 Python 3.11 / 3.13 |
 
 ### 适用边界与约束
 
@@ -135,7 +138,7 @@
     </td>
     <td valign="middle" align="center">──▶</td>
     <td valign="top">
-      Markdown 投研报告<br/>
+      HTML 投研报告<br/>
       HTML 可视化报告<br/>
       · 结论＋触发条件<br/>
       · 六因子得分表<br/>
@@ -153,8 +156,8 @@
 
 | 命令 | 用途 |
 |:-----|:-----|
-| `python3 run.py` | 完整流程：采集 → 信号 → 评分 → 组合 → 报告（MD + HTML） |
-| `python3 run.py --backtest` | 同上，并附带回测分析（注入报告第九章） |
+| `python3 run.py` | 完整流程：采集 → 信号 → 评分 → 组合 → 报告（HTML） |
+| `python3 run.py --backtest` | 同上，并附带回测分析（注入报告审计附录） |
 | `python3 run.py --analyze 513100` | 单只基金综合研判（支持代码或名称关键词） |
 | `python3 run.py --search 纳斯达克` | 搜索基金代码 |
 | `python3 run.py --recall 美联储降息` | 语义检索已沉淀语料（叙事/新闻/研判/历史报告），独立、不触发采集 |
@@ -207,26 +210,23 @@
 
 ### 3. 组合构建
 
-`src/recommender/portfolio.py` 按信号仓位比例分配权重：核心仓配宽基指数，卫星仓配行业/主动/主题，并附区域宏观强弱注记。
+`src/recommender/portfolio.py` 按信号仓位比例分配权重，并默认执行 `portfolio.index_only: true`：核心仓配置宽基指数，卫星仓配置行业、主题或区域指数，最终推荐不使用主动基金，以降低基金经理风格漂移风险。
 
 **换仓门槛**：新候选基金须比当前持仓高出 `score_threshold`（默认 10 分）才触发替换，防止因细微分差频繁调仓（QDII 来回成本可达 0.5–1.5%）。
 
-### 4. 投研报告（10 章节）
+### 4. 投研报告（四层正文 + 审计附录）
 
-每次 `python3 run.py` 后同时生成 **Markdown + HTML** 双格式报告，并自动复制至 `WSL-output` 目录：
+每次 `python3 run.py` 后生成 **HTML** 投研报告，并自动复制至 `WSL-output` 目录。报告渲染器消费 `ReportModel`，回测摘要、仓位解释、触发条件等业务口径只计算一次。自 2026-06 起主报告**仅 HTML**——废止 Markdown 孪生，彻底消除「双实现需人工同步」的维护负担（`--analyze` 单基金研判与 `--check-holdings` 持仓诊断仍各自输出独立 Markdown，无 HTML 孪生、不涉及同步问题）：
 
 | # | 章节 | 核心内容 |
 |:-:|:-----|:--------|
-| 1 | 首页结论 | 综合信号、建议仓位、3 条关键结论（含数据引用）、可执行触发条件 |
-| 2 | 数据可信度 | provenance 明细表、mock 警告、过期提示 |
-| 3 | 市场主线 | 主要矛盾、六因子得分表（权重 + 贡献）、市场叙事 |
-| 4 | 资产配置 | 核心/卫星/现金、换仓 diff（快照对比）、情景分析（牛/基/熊：触发条件 + 目标档位含确定性仓位 + 基金调整方向） |
-| 5 | 推荐基金 | 全量维度 + 推荐理由 + 主要风险（AI Phase 2 填充） |
-| 6 | 备选基金 | top\_picks 中未入选的前 5 只，含未入选原因 |
-| 7 | 组合风险 | 区域暴露、费率、QDII 特有风险清单 |
-| 8 | 行动计划 | 可执行操作条目，含触发条件和操作幅度 |
-| 9 | 回测验证 | 四基准对比、因子归因、年度拆解、幸存者偏差披露 |
-| 10 | 附录 | 数据源、评分权重、信号阈值、原始指标快照 |
+| 1 | 本期决策 | 综合信号、实际建议仓位、较上期变化、关键结论、最重要触发条件 |
+| 2 | 为什么 | 市场主要矛盾、量化证据、六因子贡献、区域宏观与市场叙事 |
+| 3 | 买什么·卖什么 | 核心/卫星基金、组合论点、情景分析、区域与费率风险 |
+| 4 | 何时改变 | 完整再平衡条件、止损与仓位调整动作 |
+| 附录 | 审计信息 | provenance、备选基金、回测验证、算法参数、AI 对抗审查全文 |
+
+当合格基金不足时，报告展示的是**实际已分配仓位**，未分配部分自动转为现金，并明确标注这是标的缺口而非主动看空。
 
 ### 5. 单基金研判 & 持仓诊断
 
@@ -301,14 +301,11 @@ export FRED_API_KEY=your_key_here
 | `stockreport` | — | A 股 / 港股 / 美股 K 线 / 财务 / 宏观 / 分红（Baostock + AkShare） |
 
 ```bash
-# 安装 yfinance-market-mcp（PyPI）
-pip install yfinance-market-mcp "mcp[cli]"
-
-# 安装 stockreport-mcp（外部仓库，无需 API Key）
+# 在 tools/ 下创建隔离环境，并安装全部 MCP 的固定版本/固定提交
 bash tools/setup_mcp.sh
 ```
 
-安装后在 Claude Code 中打开项目目录，接受提示即可使用所有 MCP 工具。
+安装脚本不会执行远程 shell，也不会污染项目主虚拟环境；`.mcp.json` 仅启动本地已固定版本的依赖。安装后在 Claude Code 中打开项目目录，接受提示即可使用所有 MCP 工具。
 
 ---
 
@@ -320,6 +317,8 @@ bash tools/setup_mcp.sh
 pip install -r requirements.txt
 # 或使用锁定版本（可复现环境）
 pip install -r requirements.lock
+# 开发与测试工具（在运行依赖之后增量安装）
+pip install -r requirements-dev.txt
 
 cp config/settings.yaml.example config/settings.yaml
 # 编辑 config/settings.yaml，填入 FRED Key（留空则宏观数据走模拟）
@@ -328,18 +327,17 @@ cp config/settings.yaml.example config/settings.yaml
 ### 完整流程
 
 ```bash
-# 采集 → 信号 → 评分 → 组合 → Markdown + HTML 投研报告
+# 采集 → 信号 → 评分 → 组合 → HTML 投研报告
 python3 run.py
 
-# 含回测（结果注入报告第九章，约需 1–2 分钟）
+# 含回测（结果注入报告审计附录，约需 1–2 分钟）
 python3 run.py --backtest
 ```
 
 运行后 CLI 末尾打印两份报告路径，并自动复制至 `/mnt/e/WSL-output/`（若可访问）：
 
 ```
-[报告] Markdown：reports/2026-06-04_fund_research_report.md
-[报告] HTML    ：reports/2026-06-04_fund_research_report.html
+[报告] HTML：reports/2026-06-04_fund_research_report.html
 [报告] 已输出至 /mnt/e/WSL-output/
 ```
 
@@ -401,7 +399,8 @@ python3 tools/download_seed_data.py        # 一次性下载基金净值种子 C
 | `fred_series` | FRED 序列 ID（`GDPC1` / `PCEPILFE` / `T10Y2Y` / `BAMLH0A0HYM2` 等） |
 | `global_macro` | World Bank / OECD 区域与指标配置 |
 | `market_indices` / `sector_etfs` | 行情采集标的 |
-| `fund_screener` | 基金池筛选规则（成立年限 / 费率 / 份额合并 / 指数去重 / 规模下限） |
+| `fund_screener` | 基金池筛选规则（指数基金限定 / 成立年限 / 费率 / 份额合并 / 指数去重 / 规模下限） |
+| `portfolio.index_only` | 最终组合仅允许指数基金（默认 `true`，同时约束核心与卫星仓） |
 | `scoring_weights` | 五维评分权重（绩效 / 风险 / 策略 / 成本 / 一致性） |
 | `strategy_params` | 分析阈值（`valuation_thresholds` / `sentiment_thresholds` / `cost_filter`） |
 | `rebalancing.score_threshold` | 换仓最小分差门槛（默认 10 分） |
@@ -438,6 +437,7 @@ fund-research/
 ├── scheduler.py                    # 每日定时调度（北京时间 08:30）
 ├── backtest.py                     # 回测分析入口
 ├── requirements.lock               # 锁定版本（可复现环境）
+├── requirements-dev.txt             # pytest / mypy 开发工具
 ├── docs/
 │   └── data_dictionary.md          # 数据字典（表/字段语义，含字段复用约定；改 schema 须同步）
 ├── config/
@@ -459,7 +459,8 @@ fund-research/
 │   ├── holdings/                   # 持仓诊断模块（--check-holdings 入口）
 │   │   └── checker.py             # 集中度/回撤/费率/风格漂移诊断
 │   ├── reports/
-│   │   ├── report_builder.py      # Markdown 投研报告生成器（10 章节）
+│   │   ├── report_model.py        # 报告展示模型与业务口径（单一真相源）
+│   │   ├── report_builder.py      # 单基金研判 / 持仓诊断 Markdown 报告
 │   │   └── html_report_builder.py # HTML 可视化报告生成器
 │   ├── collectors/                 # 采集层
 │   │   ├── macro_collector.py     # FRED 美国宏观
@@ -499,8 +500,9 @@ fund-research/
 │   └── utils/
 │       ├── config.py / database.py / provenance.py
 │       ├── portfolio_tracker.py   # 持仓追踪 + 回撤止损
+│       ├── portfolio_state_store.py # 组合快照 + NAV 原子状态提交
 │       └── fund_universe.py       # 基金标的库 + 分类 / 去重规则
-├── tests/                          # 单元 + 集成测试套件（pytest，257 用例）
+├── tests/                          # 单元 + 集成测试套件（pytest，见下方实时验证结果）
 │   ├── test_pipeline_integration.py  # 主链路集成：评分→组合→回测（真实调用）
 │   ├── test_backtester_basics.py  # 回测引擎基础校验
 │   ├── test_dataframe_guards.py   # 采集层防护（直接调生产函数，非副本）
@@ -516,11 +518,16 @@ fund-research/
 │   ├── test_holdings_checker.py   # 持仓诊断逻辑
 │   ├── test_macro_fallback.py     # 宏观数据降级回退
 │   ├── test_provenance_cache.py   # 内容哈希缓存失效（主键+data_hash+config_hash）
+│   ├── test_database_schema.py    # 新库基线 schema 与迁移字段一致性
+│   ├── test_fund_index_policy.py  # 指数基金限定策略
+│   ├── test_report_model.py       # MD/HTML 共用报告模型与业务口径
+│   ├── test_state_ownership.py    # 快照/NAV 状态所有权与原子提交
 │   └── test_retrieval.py          # 检索层（分词/BM25/去重/recall/RAG 注入开关）
 ├── tools/
 │   ├── download_seed_data.py      # 净值种子下载
 │   ├── mcp_technical_analysis.py  # MCP 技术分析服务器
-│   └── setup_mcp.sh               # MCP 扩展依赖安装
+│   ├── setup_mcp.sh               # MCP 扩展依赖隔离安装
+│   └── run_mcp.sh                 # 仅运行本地固定版本 MCP
 └── .mcp.json                       # Claude Code MCP 服务器配置
 ```
 
@@ -579,8 +586,11 @@ fund-research/
 <summary><b>组合与风控</b></summary>
 
 - ✅ **个人化输入**：`user_profile` 在信号档位基础上叠加偏移（保守 / 激进 / 投资期限），调整明细写入报告
+- ✅ **纯指数基金组合**：默认 `portfolio.index_only: true`，核心与卫星仓均过滤主动基金
 - ✅ **回撤止损机制**：`portfolio_tracker.py` 追踪假设持仓高水位；超阈值时强制降至"减仓防守"（核心 35% / 卫星 15% / 现金 50%）
 - ✅ 换仓成本门槛（默认 10 分），防止因细微分差频繁调仓
+- ✅ **原子运行状态**：组合快照与止损 NAV 同批提交；旧版状态文件保留只读兼容
+- ✅ **真实仓位披露**：候选不足时不再虚报目标仓位，缺口自动归入现金并在报告中提示
 
 </details>
 
@@ -589,17 +599,17 @@ fund-research/
 
 - ✅ **走向前回测**（无前视偏差）：每个调仓日仅用截至该日的数据快照，真实 CAPE 按日期 as-of 引用
 - ✅ **四基准对比**：策略 vs 等权买持 vs 60/40 vs 纯现金；60/40 基准的现金仓位按 `RF_ANNUAL/12` 计息
-- ✅ **因子归因**（`--attribution`）：逐因子屏蔽回测，量化各因子边际贡献，结果注入报告第九章
+- ✅ **因子归因**（`--attribution`）：逐因子屏蔽回测，量化各因子边际贡献，结果注入报告审计附录
 - ✅ **幸存者偏差修正**：每个调仓日仅允许成立日期 ≤ t0 的基金参与对照组，量化偏差溢价
-- ✅ **回测嵌入报告**：`python3 run.py --backtest` 触发，结果直接注入当期报告第九章
+- ✅ **回测嵌入报告**：`python3 run.py --backtest` 触发，结果直接注入当期报告审计附录
 
 </details>
 
 <details>
 <summary><b>报告与调度</b></summary>
 
-- ✅ **10 章节 Markdown 投研报告**：首页结论 + 证据链 + 行动计划 + 数据可信度披露
-- ✅ **HTML 可视化报告**：与 Markdown 同步生成，自动复制至 WSL-output 目录
+- ✅ **分层 HTML 投研报告**：本期决策 + 证据 + 买卖建议 + 改变条件 + 折叠审计附录，自动复制至 WSL-output 目录
+- ✅ **单基金研判 / 持仓诊断 Markdown 报告**：`--analyze` 与 `--check-holdings` 各自独立产出
 - ✅ 每日定时调度（北京时区自适应，**信号变化自动通知**，档位变化时 WARNING 级别日志）
 - ✅ **AI 三阶段增强**（Phase 1 市场解析 + Phase 2 投资决策 + Phase 3 对抗式审查；配置开关，失败自动 fallback）
   - Phase 3「挑错」子智能体复核 Phase 2 决策，专抓与数据矛盾/无依据/过度自信/遗漏风险/自相矛盾，结论以独立板块呈现于报告（防「看似合理实则错误」被静默采用）。默认关闭，仅对重要输出按需启用。
@@ -614,10 +624,10 @@ fund-research/
 <details>
 <summary><b>语义检索与 RAG</b></summary>
 
-- ✅ **BM25 词法检索**（`src/retrieval/`）：纯 numpy/collections，零新依赖；中英混合分词（CJK 字符二元组），经 `Retriever` 协议封装，日后可平滑升级 embedding 后端（`retrieval.backend` 切换，store/recall/注入零改动）
+- ✅ **BM25 词法检索**（`src/retrieval/`）：纯 numpy/collections，零新依赖；中英混合分词（CJK 字符二元组），按文档版本缓存索引，仅在语料变化时重建
 - ✅ **语料沉淀（三源）**：把「用完即弃」文本（市场叙事 / 区域展望 / 单基金研判）、新闻原文（采集时聚合成数值前截留）、历史报告（按 H2 分块）落 `documents` 表；按内容哈希去重（复用 `compute_data_hash`），幂等入库
 - ✅ **`--recall` 独立语义搜索**：在已沉淀语料上检索并按相关度排名输出，独立分支、不触发采集
-- ✅ **RAG 注入 AI 三阶段**：检索证据注入 Phase 1 市场分析 / Phase 2 组合建议 prompt；`retrieval.inject_into_ai` 门控，**关闭则 prompt 与现状逐字一致**（回归保护）
+- ✅ **RAG 注入 AI 三阶段**：检索证据注入 Phase 1 市场分析 / Phase 2 组合建议 prompt；证据按不可信数据隔离并禁止执行其中指令；`retrieval.inject_into_ai` 门控，**关闭则 prompt 与现状逐字一致**（回归保护）
 - ✅ **单一总开关 + 状态可见**：`retrieval.enabled` 是唯一真相源，关闭则整层静默（不写/不检索/不注入，含新闻截留）；报告「数据可信度」板块显示该层开关/注入/语料量，避免可选板块「日久被遗忘」
 - ✅ **内容哈希缓存层**（`provenance.py`）：缓存按 主键 + `data_hash` + `config_hash` 失效（配置一变即作废）；原始 payload 内容寻址落 `data/raw/`（不可变快照，供复现/审计）；新增缓存点用 `cached_fetch`
 
@@ -642,6 +652,10 @@ fund-research/
 - ✅ `test_macro_fallback` — 宏观数据三级降级回退链路
 - ✅ `test_provenance_cache` — 内容哈希缓存失效（主键 + data_hash + config_hash、超时、快照丢失、不可变快照）
 - ✅ `test_retrieval` — 检索层（CJK 二元组分词、BM25 相关性排序、store 去重幂等、recall 端到端、RAG 注入开关 on/off 逐字一致）
+- ✅ `test_database_schema` — 全新 SQLite 数据库基线字段与迁移结果一致
+- ✅ `test_fund_index_policy` — 基金池与最终组合的指数基金限定
+- ✅ `test_report_model` — HTML 报告共享业务模型、仓位缺口与回测口径
+- ✅ `test_state_ownership` — 组合快照、止损 NAV 与原子提交时序
 
 </details>
 
@@ -655,7 +669,9 @@ fund-research/
 | 四基准对比 | 同时输出"等权买入持有"基准，可直观区分信号择时与基金选择各自的贡献 |
 | live 与回测同口径 | 信号权重、评分、策略匹配共用 `src/domain/scoring.py` 同一纯函数，消除双实现漂移 |
 | 幸存者偏差处理 | 回测采用两轨并行：主轨（当前池）为收益上界；对照轨按成立日期过滤，仅保留调仓日之前已成立的基金，量化偏差溢价。已清盘基金因历史净值数据不可得，无法纳入历史模拟——这是行业通行的数据边界，系统在报告和代码中均明确披露（`survivorship_note`），结果应视为上界而非可复现收益 |
-| 双格式报告 | Markdown 供版本管理与 diff 审阅，HTML 供浏览器直接查看；两者内容同源 |
+| HTML 报告 | 主投研报告仅 HTML，浏览器直接查看；废止 Markdown 孪生以消除双实现同步成本 |
+| 状态一致性 | 组合快照与止损 NAV 使用单一运行状态文件原子替换；旧文件仅用于兼容读取 |
+| RAG 安全 | 检索语料视为不可信数据，结构化隔离并禁止覆盖系统指令或请求工具执行 |
 | 报告容错 | 报告生成失败仅打印 warning，不中断数据采集与信号生成主流程 |
 | 时区 | 调度器把北京时间 08:30 自动换算为系统本地时区 |
-| 依赖 | `pandas` / `numpy` / `yfinance` / `akshare` / `fredapi` / `requests` / `PyYAML` / `schedule` / `scipy` · 可选：`mcp[cli]` / `fastmcp` / `baostock`（MCP 扩展） |
+| 依赖 | 主程序依赖由 `requirements.lock` 锁定；pytest/mypy 在 `requirements-dev.txt`；MCP 依赖隔离安装在 `tools/`，不进入主环境 |

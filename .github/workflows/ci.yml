@@ -10,23 +10,26 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.13"]
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          # requirements.lock 钉的 pandas 3.0 / numpy 2.4 需 Python ≥ 3.11
-          python-version: "3.13"
+          # pandas 3.0 要求 Python ≥ 3.11；同时覆盖最低版本与当前主力版本。
+          python-version: ${{ matrix.python-version }}
           cache: pip
           cache-dependency-path: requirements.lock
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          # 复现环境用 lock；mypy 是开发期工具，单独钉版本与本地一致
+          # 运行依赖使用 lock；开发工具显式安装，避免依赖系统环境偶然携带。
           pip install -r requirements.lock
-          pip install mypy==2.1.0
+          pip install mypy==2.1.0 pytest==9.0.2
 
       - name: Type check (mypy 契约护栏)
         run: mypy src/

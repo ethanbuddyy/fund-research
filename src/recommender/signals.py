@@ -129,6 +129,30 @@ def compute_market_signal(
     return signal
 
 
+def _global_macro_factor() -> tuple[dict, float]:
+    """第6因子（全球宏观）计算；失败时记入溯源并回落中性 5.0（隔离以便单测）。
+
+    analyze_global_macro 对「无数据」已返回 available=False（不抛异常），故本函数
+    except 捕到的都是**意外错误**（schema/逻辑 bug）。过去这里静默回落 5.0，使一个
+    本应参与综合分的因子悄悄失效却无任何告警——现在记 provenance(partial) + 高声
+    告警，让 banner / 报告「数据可信度」板块显形，杜绝静默劣化污染决策。
+    """
+    try:
+        from ..analyzers.global_macro_analyzer import (
+            analyze_global_macro, compute_global_macro_score,
+        )
+        gm = analyze_global_macro()
+        return gm, compute_global_macro_score(gm)
+    except Exception as e:
+        from ..utils import provenance
+        provenance.record(
+            "global_macro_score", "partial",
+            detail=f"第6因子计算异常，回落中性 5.0：{e}",
+        )
+        print(f"[WARN] 第6因子（全球宏观）计算异常，已记入溯源并回落中性 5.0：{e}")
+        return {"available": False, "regions": {}}, 5.0
+
+
 def generate_market_signal(save: bool = True) -> MarketSignal:
     """适配器：读取数据库/配置/采集器 → 调纯函数 compute_market_signal → 追加 AI。
 
@@ -146,13 +170,7 @@ def generate_market_signal(save: bool = True) -> MarketSignal:
     credit_score = _credit_score()      # 信用利差（读 macro_data）
 
     # 第6因子：全球宏观综合评分（QDII资产规模权重的跨区域加权）
-    try:
-        from ..analyzers.global_macro_analyzer import analyze_global_macro, compute_global_macro_score
-        global_macro = analyze_global_macro()
-        global_macro_score = compute_global_macro_score(global_macro)
-    except Exception:
-        global_macro = {"available": False, "regions": {}}
-        global_macro_score = 5.0
+    global_macro, global_macro_score = _global_macro_factor()
 
     fund_list_data = _get_fund_list()
     narrative = generate_narrative(valuation, sentiment, fund_list_data, cfg)

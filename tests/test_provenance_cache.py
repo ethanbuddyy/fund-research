@@ -100,6 +100,21 @@ class TestCacheRoundtrip:
         # 不设时效 → 仍命中
         assert provenance.cache_get("news", "spx") is not None
 
+    def test_invalid_timestamp_invalidates_when_age_is_required(self, tmp_db):
+        provenance.cache_put(provenance.DataResult(
+            source="news", payload={"s": 0.5}, source_id="broken-time"))
+        conn = database.get_connection()
+        conn.execute(
+            "UPDATE data_cache SET fetched_at = 'not-a-date' "
+            "WHERE cache_key = 'news:broken-time'"
+        )
+        conn.commit()
+        conn.close()
+
+        assert provenance.cache_get(
+            "news", "broken-time", max_age_days=1
+        ) is None
+
     def test_lost_snapshot_invalidates(self, tmp_db):
         res = provenance.cache_put(provenance.DataResult(
             source="macro", payload={"x": 1}, source_id="cycle"))

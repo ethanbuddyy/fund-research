@@ -1,9 +1,11 @@
 """三源语料汇聚到 store。
 
 - ingest_run：把「本次运行产出、渲染进报告后即丢弃」的文本沉淀下来
-  （市场叙事 / 组合备注）。
-- ingest_reports_dir：收编历史报告 reports/*.md，按 H2 标题分块。
-- ingest_fund_analysis：单基金研判（analyze_command 调用）。
+  （市场叙事 / 组合备注）。主投研报告的关键叙事即由此沉淀（主报告已收敛为
+  仅 HTML，不再落 Markdown，故不靠扫描报告文件回收其正文）。
+- ingest_reports_dir：收编 reports/*.md（现为 `--analyze` 单基金研判报告），
+  按 H2 标题分块。
+- ingest_fund_analysis：单基金研判结论/地区展望（analyze_command 调用）。
 
 全部 fail-soft：任何一条失败只打印告警、不阻断主流程（沿用项目采集层风格）。
 ingestion 受 retrieval.enabled 总开关控制——关掉则一条都不写。
@@ -119,7 +121,11 @@ def ingest_fund_analysis(result: dict) -> int:
 
 
 def ingest_reports_dir(dirpath: Optional[str] = None) -> int:
-    """扫 reports/*.md，按 H2 标题分块入库（doc_type=report）。幂等去重。返回新增块数。"""
+    """扫 reports/*.md（单基金研判报告），按 H2 标题分块入库（doc_type=report）。
+
+    主投研报告自 2026-06 起仅产出 HTML、不再有 Markdown 文件，故此处只会命中
+    `--analyze` 生成的 *.md；幂等去重，多跑无害。返回新增块数。
+    """
     if not _enabled():
         return 0
     base = Path(dirpath) if dirpath else (_ROOT / "reports")

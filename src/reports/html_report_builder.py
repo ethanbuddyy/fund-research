@@ -19,9 +19,9 @@ from ..domain.types import MarketSignal, PortfolioRecommendation
 # 共享业务函数/常量统一从 report_model 取（不再跨文件 import report_builder 私有函数）
 from .report_model import (
     _key_conclusions, primary_contradiction,
-    market_narrative, alloc_logic_text, region_exposure,
+    market_narrative, alloc_logic_text, allocation_shortfall_note, region_exposure,
     review_findings, _VERDICT_LABEL, _CATEGORY_CN, _snapshot_change_note,
-    signal_threshold_rows, build_report_model, ReportModel,
+    signal_threshold_rows, build_report_model, build_backtest_view, ReportModel,
 )
 from .report_editor import canonical_triggers, headline_triggers
 from ..domain.scoring import format_scenario_case
@@ -535,6 +535,12 @@ def _section_conclusion(signal: Mapping[str, Any], portfolio: Mapping[str, Any])
     conclusions = _key_conclusions(signal, portfolio)[:2]
     triggers = headline_triggers(signal, portfolio, 1)  # 唯一出处在「何时改变」，首页只放最关键 1 条
     banner = _review_banner_html(portfolio)
+    shortfall = allocation_shortfall_note(portfolio)
+    shortfall_html = (
+        f'<div class="card" style="border-left:4px solid var(--amber);'
+        f'color:var(--amber);font-size:13px;">⚠️ {_e(shortfall)}</div>'
+        if shortfall else ""
+    )
     if not conclusions and not triggers and not banner:
         return ""
 
@@ -556,6 +562,7 @@ def _section_conclusion(signal: Mapping[str, Any], portfolio: Mapping[str, Any])
 <div class="section">
   <div class="section-title">首页结论</div>
   {banner}
+  {shortfall_html}
   {snap_html}
   <div class="two-col">
     <div class="card">
@@ -1197,19 +1204,15 @@ def _section_backtest(backtest: Optional[Mapping[str, Any]]) -> str:
   <div class="card"><div style="color:var(--red)">⚠️ 回测失败：{_e(backtest['error'])}</div></div>
 </div>"""
 
-    sm    = backtest.get("strat_metrics", {})
-    ewbh  = backtest.get("ewbh_metrics", {})
-    spm   = backtest.get("sp500_metrics", {})
-    b6040 = backtest.get("b6040_metrics", {})
-    ds    = backtest.get("data_source", "unknown")
-    ds_label = {"real": "✅ 真实数据", "partial": "⚠️ 部分真实/近似",
-                "mock": "❌ 含模拟数据(仅演示)"}.get(ds, ds)
-    start = backtest.get("start_date", "—")
-    end   = backtest.get("end_date", "—")
-    n_periods = backtest.get("n_periods", "—")
-
-    alpha_ewbh  = (sm.get("annualized_return", 0) or 0) - (ewbh.get("annualized_return", 0) or 0)
-    alpha_sp500 = (sm.get("annualized_return", 0) or 0) - (spm.get("annualized_return", 0) or 0)
+    view = build_backtest_view(backtest)
+    sm = view.strategy
+    ewbh = view.equal_weight
+    spm = view.sp500
+    b6040 = view.balanced_6040
+    ds_label = view.data_source_label
+    start = view.start
+    end = view.end
+    n_periods = view.n_periods
 
     metric_rows = (
         _bt_metric_row("累计收益", sm, ewbh, spm, b6040, "total_return") +
@@ -1221,25 +1224,15 @@ def _section_backtest(backtest: Optional[Mapping[str, Any]]) -> str:
     )
 
     # 信号有效性
-    sig_stats = backtest.get("signal_stats")
     sig_block = ""
-    if sig_stats is not None and not (hasattr(sig_stats, "empty") and sig_stats.empty):
+    if view.signal_rows:
         srows = []
-        try:
-            for _, row in sig_stats.iterrows():
-                s = str(row.get("信号", ""))
-                n = row.get("出现次数", "—")
-                sp_r = row.get("SP500次月均收益%", None)
-                if s == "重仓进取":
-                    ok = "✓ 有效" if sp_r and float(sp_r) > 1.5 else "△ 弱" if sp_r and float(sp_r) > 0 else "✗ 失效"
-                elif s in ("谨慎防守", "减仓防守"):
-                    ok = "✓ 有效" if sp_r and float(sp_r) < 0.5 else "△ 弱"
-                else:
-                    ok = "—"
-                srows.append(f'<tr><td>{_e(s)}</td><td class="td-right">{n}</td>'
-                             f'<td class="td-right">{_pct(sp_r,2)}</td><td>{ok}</td></tr>')
-        except Exception:
-            srows = []
+        for signal_name, count, next_return, effectiveness in view.signal_rows:
+            srows.append(
+                f'<tr><td>{_e(signal_name)}</td><td class="td-right">{count}</td>'
+                f'<td class="td-right">{_pct(next_return,2)}</td>'
+                f'<td>{effectiveness}</td></tr>'
+            )
         if srows:
             sig_block = f"""
     <div style="margin-top:16px;font-size:12px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px;">信号有效性验证</div>
@@ -1250,11 +1243,10 @@ def _section_backtest(backtest: Optional[Mapping[str, Any]]) -> str:
 
     # 幸存者偏差修正对照
     surv_block = ""
-    corrected = backtest.get("corrected_strat_metrics")
-    surv_stats = backtest.get("survivorship_stats", {})
+    corrected = view.corrected
     if corrected:
-        bias = (sm.get("annualized_return", 0) or 0) - (corrected.get("annualized_return", 0) or 0)
-        avg_premature = surv_stats.get("avg_premature_per_period", 0)
+        bias = view.survivorship_bias or 0
+        avg_premature = view.avg_premature_per_period
         surv_block = f"""
     <div style="margin-top:16px;font-size:12px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px;">幸存者偏差修正对照</div>
     <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px;">仅允许使用成立日 ≤ 调仓日的基金参与评分（平均每期剔除 {avg_premature:.1f} 只）。</div>
@@ -1269,11 +1261,9 @@ def _section_backtest(backtest: Optional[Mapping[str, Any]]) -> str:
 
     # 因子归因
     attr_block = ""
-    attr = backtest.get("factor_attribution")
-    if attr and "factors" in attr:
-        base_ann = attr.get("base_annual_return", 0)
+    if view.factor_rows:
         arows = []
-        for fname, info in sorted(attr["factors"].items(), key=lambda x: -x[1]["contribution_pct"]):
+        for info in view.factor_rows:
             arows.append(
                 f'<tr><td>{_e(info["label"])}</td>'
                 f'<td class="td-right">{info["base_weight"]*100:.1f}%</td>'
@@ -1283,15 +1273,17 @@ def _section_backtest(backtest: Optional[Mapping[str, Any]]) -> str:
             )
         attr_block = f"""
     <div style="margin-top:16px;font-size:12px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px;">因子归因（逐因子屏蔽实验）</div>
-    <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px;">基准策略（6因子全开）年化：<b style="color:var(--text)">{_pct(base_ann,2)}</b>；贡献 = 基准 − 屏蔽后。</div>
+    <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px;">基准策略（6因子全开）年化：<b style="color:var(--text)">{_pct(view.factor_base_annual_return,2)}</b>；贡献 = 基准 − 屏蔽后。</div>
     <div class="table-wrap"><table>
       <thead><tr><th>因子</th><th class="td-right">原权重</th><th class="td-right">屏蔽后年化</th><th class="td-right">边际贡献</th><th>评级</th></tr></thead>
       <tbody>{''.join(arows)}</tbody>
     </table></div>"""
 
-    surv_note = backtest.get("survivorship_note", "")
-    surv_warn = (f'<div style="color:var(--amber);font-size:12px;margin-top:6px;">⚠️ 幸存者偏差：{_e(surv_note)}</div>'
-                 if surv_note else "")
+    surv_warn = (
+        f'<div style="color:var(--amber);font-size:12px;margin-top:6px;">'
+        f'⚠️ 幸存者偏差：{_e(view.survivorship_note)}</div>'
+        if view.survivorship_note else ""
+    )
 
     return f"""
 <div class="section">
@@ -1307,8 +1299,8 @@ def _section_backtest(backtest: Optional[Mapping[str, Any]]) -> str:
       <tbody>{metric_rows}</tbody>
     </table></div>
     <div style="margin-top:12px;display:flex;gap:24px;flex-wrap:wrap;font-size:13px;">
-      <span style="color:var(--text-dim)">超额 vs 等权买持：<b class="{_ret_class(alpha_ewbh)}">{_pct(alpha_ewbh,2)}/年</b></span>
-      <span style="color:var(--text-dim)">超额 vs 标普500：<b class="{_ret_class(alpha_sp500)}">{_pct(alpha_sp500,2)}/年</b></span>
+      <span style="color:var(--text-dim)">超额 vs 等权买持：<b class="{_ret_class(view.alpha_equal_weight)}">{_pct(view.alpha_equal_weight,2)}/年</b></span>
+      <span style="color:var(--text-dim)">超额 vs 标普500：<b class="{_ret_class(view.alpha_sp500)}">{_pct(view.alpha_sp500,2)}/年</b></span>
     </div>
     {surv_block}
     {sig_block}

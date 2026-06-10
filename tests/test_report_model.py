@@ -12,9 +12,9 @@ from pathlib import Path
 
 from src.domain.scoring import POSITION_TIERS, tier_allocation_str
 from src.reports.report_model import (
-    build_report_model, ReportModel, signal_threshold_rows,
+    build_backtest_view, build_report_model, ReportModel, signal_threshold_rows,
 )
-from tests.test_report_builder import _signal, _portfolio
+from tests._report_fixtures import make_signal as _signal, make_portfolio as _portfolio
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -61,6 +61,46 @@ class TestBuildReportModel:
         _sig, _p, m = _model()
         assert m.key_conclusions
 
+    def test_allocation_shortfall_is_disclosed(self):
+        sig = _signal()
+        p = _portfolio(
+            core_allocation_pct=0,
+            satellite_allocation_pct=0,
+            cash_allocation_pct=100,
+            allocation_shortfall_pct=90,
+            core_funds=[],
+            satellite_funds=[],
+        )
+        prov = {"data": {}, "overall_mode": "real", "stale_warnings": []}
+        model = build_report_model(
+            sig, p, None, None, None, prov,
+            {"scoring_weights": {}, "strategy_params": {}},
+        )
+        assert any("无合格标的" in conclusion for conclusion in model.key_conclusions)
+
+
+def test_backtest_view_handles_zero_return_and_sorts_factors():
+    import pandas as pd
+
+    view = build_backtest_view({
+        "strat_metrics": {"annualized_return": 8},
+        "ewbh_metrics": {"annualized_return": 5},
+        "sp500_metrics": {"annualized_return": 6},
+        "signal_stats": pd.DataFrame([{
+            "信号": "重仓进取", "出现次数": 2, "SP500次月均收益%": 0,
+        }]),
+        "factor_attribution": {
+            "base_annual_return": 8,
+            "factors": {
+                "low": {"label": "低", "contribution_pct": -1},
+                "high": {"label": "高", "contribution_pct": 2},
+            },
+        },
+    })
+    assert view.alpha_equal_weight == 3
+    assert view.signal_rows[0][3] == "✗ 失效"
+    assert [row["label"] for row in view.factor_rows] == ["高", "低"]
+
 
 # ────────────────────────────────────────────────────────────────────
 # 仓位档位表同源 POSITION_TIERS
@@ -78,38 +118,36 @@ def test_signal_threshold_rows_from_position_tiers():
 
 
 # ────────────────────────────────────────────────────────────────────
-# #7：MD 与 HTML 的触发/调仓/档位表同源于 ReportModel
+# #7：HTML 主报告的触发/调仓/档位表忠实渲染自同一个 ReportModel
+# （主报告已仅 HTML，MD 孪生废止；单一真相源从「MD≡HTML」变为「ReportModel→HTML」）
 # ────────────────────────────────────────────────────────────────────
 
-class TestMdHtmlSingleSource:
-    def _render_both(self, tmp_path):
-        from src.reports.report_builder import build_report
+class TestHtmlSingleSource:
+    def _render(self, tmp_path):
         from src.reports.html_report_builder import build_html_report
         sig = _signal()
         p = _portfolio()
         p["previous_portfolio"] = {"core": {"999999": {}}, "satellite": {}}
-        md = build_report(sig, p, output_dir=str(tmp_path)).read_text(encoding="utf-8")
         ht = build_html_report(sig, p, output_dir=str(tmp_path)).read_text(encoding="utf-8")
         prov = {"data": {}, "overall_mode": "real", "stale_warnings": []}
         m = build_report_model(sig, p, None, None, p["previous_portfolio"], prov,
                                {"scoring_weights": {}, "strategy_params": {}})
-        return md, ht, m
+        return ht, m
 
-    def test_triggers_same_source(self, tmp_path):
-        md, ht, m = self._render_both(tmp_path)
+    def test_triggers_from_model(self, tmp_path):
+        ht, m = self._render(tmp_path)
         assert m.canonical_triggers
         for t in m.canonical_triggers:
-            assert t in md, f"MD 缺触发：{t}"
             assert _html.escape(t) in ht, f"HTML 缺触发（转义后）：{t}"
 
-    def test_rebalance_change_in_both(self, tmp_path):
-        md, ht, _m = self._render_both(tmp_path)
-        assert "999999" in md and "999999" in ht
+    def test_rebalance_change_rendered(self, tmp_path):
+        ht, _m = self._render(tmp_path)
+        assert "999999" in ht
 
-    def test_position_tier_table_in_both(self, tmp_path):
-        md, ht, _m = self._render_both(tmp_path)
+    def test_position_tier_table_rendered(self, tmp_path):
+        ht, _m = self._render(tmp_path)
         alloc = tier_allocation_str("重仓进取")  # 核心70%/卫星25%/现金5%
-        assert alloc in md and alloc in ht
+        assert alloc in ht
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -136,12 +174,11 @@ def test_report_layer_does_not_read_snapshot_file():
 
 
 def test_render_helpers_do_not_read_config_or_db():
-    """主报告渲染章节不读配置/数据库（IO 只在入口适配器 build_report/build_html_report）。"""
-    from src.reports import report_builder as rb
+    """HTML 主报告渲染章节不读配置/数据库（IO 只在入口适配器 build_html_report）。"""
     from src.reports import html_report_builder as hb
 
-    for fn in (rb._algo_params_md, rb._audit_appendix, rb._layer1_decision,
-               hb._section_appendix, hb._section_data_quality, hb._render):
+    for fn in (hb._section_appendix, hb._section_data_quality, hb._render,
+               hb._section_market, hb._section_funds):
         src = inspect.getsource(fn)
         assert "load_config" not in src, f"{fn.__name__} 仍读配置"
         assert "read_table" not in src and "get_connection" not in src, f"{fn.__name__} 仍读库"
