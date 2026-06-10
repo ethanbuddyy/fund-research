@@ -23,6 +23,21 @@ def _check_table(table: str) -> None:
         )
 
 
+def _check_where(where: str) -> None:
+    """read_table 的 where 子句以 f-string 拼入 SQL（过滤值用 ? 参数化）。
+
+    契约：where **只接受代码内常量条件**（列名/运算符/ORDER BY/LIMIT 等结构），
+    过滤值必须经 params 参数化传入，禁止把任何外部/用户输入拼进 where。
+    这里加一道廉价护栏挡住语句堆叠（`;`）与注释注入（`--`、`/* */`），
+    与表名白名单（_check_table）形成对称防线——当前所有调用点均传常量，不触发。
+    """
+    if ";" in where or "--" in where or "/*" in where:
+        raise ValueError(
+            f"非法 where 子句 {where!r}：含语句分隔符/注释，疑似注入。"
+            "where 只接受代码内常量条件，过滤值必须经 params 参数化传入。"
+        )
+
+
 def get_connection() -> sqlite3.Connection:
     db_path = get_db_path()
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
@@ -311,11 +326,13 @@ def upsert_dataframe(df: pd.DataFrame, table: str, unique_cols: list[str]):
 
 
 def read_table(table: str, where: str = "", params: tuple = ()) -> pd.DataFrame:
+    """读整表或带 where 过滤。table 走白名单，where 只接受代码内常量（值用 params）。"""
     _check_table(table)
     conn = get_connection()
     try:
         query = f"SELECT * FROM {table}"
         if where:
+            _check_where(where)
             query += f" WHERE {where}"
         return pd.read_sql_query(query, conn, params=params)
     finally:

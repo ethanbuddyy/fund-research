@@ -88,21 +88,17 @@ def main():
         except Exception as e:
             print(f"[回测] 回测失败（报告第九章将显示'未执行'）: {e}")
 
-    # 生成 Markdown + HTML 投研报告，并自动输出至 WSL-output
+    # 生成 HTML 投研报告（主报告仅 HTML，不再有 Markdown 孪生），并自动输出至 WSL-output
     try:
-        from src.reports.report_builder import build_report
         from src.reports.html_report_builder import build_html_report
         import shutil
 
-        report_path = build_report(signal, portfolio, scores_df=scores_df, backtest=backtest)
-        html_path   = build_html_report(signal, portfolio, scores_df=scores_df, backtest=backtest)
-        print(f"\n[报告] Markdown：{report_path}")
-        print(f"[报告] HTML    ：{html_path}")
+        html_path = build_html_report(signal, portfolio, scores_df=scores_df, backtest=backtest)
+        print(f"\n[报告] HTML：{html_path}")
 
         _WSL_OUTPUT = "/mnt/e/WSL-output"
         if os.path.isdir(_WSL_OUTPUT):
-            shutil.copy(report_path, _WSL_OUTPUT)
-            shutil.copy(html_path,   _WSL_OUTPUT)
+            shutil.copy(html_path, _WSL_OUTPUT)
             print(f"[报告] 已输出至 {_WSL_OUTPUT}/")
         else:
             print(f"[报告] {_WSL_OUTPUT} 不可访问，跳过输出")

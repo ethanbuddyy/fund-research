@@ -169,7 +169,7 @@ def test_build_does_not_write_snapshot_returns_payload(monkeypatch, tmp_path):
 
 def test_change_note_uses_in_memory_previous():
     """上期 A/B、本期 B/C → 报告显示新增 C、移除 A，且不读盘。"""
-    from src.reports.report_builder import _snapshot_change_note
+    from src.reports.report_model import _snapshot_change_note
     portfolio = {
         "core_funds": [{"fund_code": "B"}],
         "satellite_funds": [{"fund_code": "C"}],
@@ -181,7 +181,7 @@ def test_change_note_uses_in_memory_previous():
 
 
 def test_change_note_first_run_no_previous():
-    from src.reports.report_builder import _snapshot_change_note
+    from src.reports.report_model import _snapshot_change_note
     note = _snapshot_change_note({"core_funds": [], "satellite_funds": [],
                                   "previous_portfolio": None})
     assert "首次运行" in note

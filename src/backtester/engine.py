@@ -35,6 +35,119 @@ RF_ANNUAL = 0.02             # 无风险利率假设 2%
 # 主入口
 # ─────────────────────────────────────────────
 
+def _prepare_backtest_data(start_date, end_date, rebalance_freq, cfg) -> dict:
+    """读取各源表 + 确定回测窗口 + 预切片。
+
+    返回 frames dict；数据不足（无净值 / 区间过短）时返回 {"error": ...}，由
+    run_backtest 透传。从 run_backtest 提取以缩短主函数、隔离 IO 与窗口逻辑（issue #3）。
+    """
+    fund_nav = read_table("fund_nav_history")
+    if fund_nav.empty:
+        return {"error": "无基金净值数据，请先运行 python run.py"}
+
+    market_db       = read_table("market_data")
+    macro_db        = read_table("macro_data")
+    fund_list       = read_table("fund_list")
+    global_macro_db = read_table("global_macro")   # 全球宏观（World Bank + OECD CLI）
+    cape_hist       = _load_cape_history()          # 真实 CAPE 历史
+
+    # 成立日期映射（用于幸存者偏差修正，缺失时跳过修正）
+    inception_map: dict[str, str] = {}
+    if "inception_date" in fund_list.columns:
+        for _, row in fund_list.iterrows():
+            d = row.get("inception_date")
+            if d and pd.notna(d):
+                inception_map[str(row["fund_code"])] = str(d)[:10]
+
+    fund_nav["date"]  = pd.to_datetime(fund_nav["date"])
+    market_db["date"] = pd.to_datetime(market_db["date"])
+    if not macro_db.empty:
+        macro_db["date"] = pd.to_datetime(macro_db["date"])
+
+    # 获取完整 SP500 历史（包含 DB 没有的更早数据）
+    sp500_full = _fetch_sp500_full(market_db)
+
+    # 确定回测区间（需要宏观+市场数据双覆盖）
+    data_start = max(
+        fund_nav["date"].min() + pd.DateOffset(months=6),
+        macro_db["date"].min() + pd.DateOffset(months=12) if not macro_db.empty else pd.Timestamp("2022-01-01"),
+        sp500_full.index.min() + pd.DateOffset(months=1),
+    )
+    data_end = fund_nav["date"].max()
+
+    bt_start = pd.to_datetime(start_date) if start_date else data_start
+    bt_end   = pd.to_datetime(end_date)   if end_date   else data_end
+
+    rebalance_dates = pd.date_range(start=bt_start, end=bt_end, freq=rebalance_freq)
+    if len(rebalance_dates) < 4:
+        return {"error": f"回测区间过短（{len(rebalance_dates)} 个调仓日），至少需要 4 个月"}
+
+    return {
+        "fund_nav": fund_nav, "market_db": market_db, "macro_db": macro_db,
+        "fund_list": fund_list, "global_macro_db": global_macro_db,
+        "cape_hist": cape_hist, "sp500_full": sp500_full,
+        # 净值表按基金预切片一次，供各调仓期区间收益查找复用（避免整表反复过滤）
+        "nav_by_code": _index_nav_by_code(fund_nav),
+        "inception_map": inception_map, "rebalance_dates": rebalance_dates,
+    }
+
+
+def _finalize_backtest(df, fund_list, inception_map, n_premature_total,
+                       rebalance_dates, fw) -> dict:
+    """由逐期 records 的 DataFrame 计算累计/回撤/各基准指标，组装回测结果 dict。
+
+    从 run_backtest 提取（issue #3）：纯 DataFrame 计算，不涉及逐期无前视逻辑。
+    """
+    # 累计净值序列（初始 = 1.0）
+    df["strat_cum"]  = (1 + df["strat_return"]).cumprod()
+    df["sp500_cum"]  = (1 + df["sp500_return"]).cumprod()
+    df["b6040_cum"]  = (1 + df["b6040_return"]).cumprod()
+    df["ewbh_cum"]   = (1 + df["ewbh_return"]).cumprod()
+
+    # 最大回撤序列（用于画图）
+    df["strat_dd"]  = _drawdown_series(df["strat_cum"])
+    df["sp500_dd"]  = _drawdown_series(df["sp500_cum"])
+
+    # 幸存者偏差修正指标（当 corrected_return 列存在时）
+    corrected_metrics = None
+    surv_stats: dict = {}
+    if "corrected_return" in df.columns:
+        corrected_metrics = calc_metrics(df["corrected_return"].dropna(), "幸存者修正策略")
+        if "premature_funds" in df.columns:
+            surv_stats = {
+                "periods_with_premature": int((df["premature_funds"] > 0).sum()),
+                "avg_premature_per_period": round(df["premature_funds"].mean(), 1),
+                "total_premature_instances": int(n_premature_total),
+            }
+
+    n_funds_with_inception = len(inception_map)
+    surv_note = (
+        f"基金池为当前在运作的 {len(fund_list)} 只核心QDII（其中 {n_funds_with_inception} 只有成立日期）"
+        f"，未含已清盘/改名基金；策略收益为乐观上界，非可复现实盘收益。"
+        + (f" 幸存者修正对照组基于成立日期过滤，"
+           f"平均每期剔除 {surv_stats.get('avg_premature_per_period', 0):.1f} 只未成立基金。"
+           if surv_stats else "")
+    )
+
+    return {
+        "df":                    df,
+        "strat_metrics":         calc_metrics(df["strat_return"],  "本策略（动态配置）"),
+        "sp500_metrics":         calc_metrics(df["sp500_return"],  "标普500（买入持有）"),
+        "b6040_metrics":         calc_metrics(df["b6040_return"],  "60/40 组合"),
+        "ewbh_metrics":          calc_metrics(df["ewbh_return"],   "等权基金买入持有"),
+        "corrected_strat_metrics": corrected_metrics,          # 幸存者偏差修正对照组
+        "survivorship_stats":    surv_stats,
+        "signal_stats":          _signal_accuracy(df),
+        "start_date":            rebalance_dates[0].strftime("%Y-%m-%d"),
+        "end_date":              rebalance_dates[-1].strftime("%Y-%m-%d"),
+        "n_periods":             len(df),
+        "fund_list":             fund_list,
+        "data_source":           _backtest_data_source(),
+        "factor_weights":        fw,
+        "survivorship_note":     surv_note,
+    }
+
+
 def run_backtest(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
@@ -62,49 +175,20 @@ def run_backtest(
     if cape_overvalued is not None:
         cfg.setdefault("strategy_params", {}).setdefault("valuation_thresholds", {})["cape_overvalued"] = cape_overvalued
 
-    fund_nav       = read_table("fund_nav_history")
-    market_db      = read_table("market_data")
-    macro_db       = read_table("macro_data")
-    fund_list      = read_table("fund_list")
-    global_macro_db = read_table("global_macro")   # 全球宏观（World Bank + OECD CLI）
-    cape_hist      = _load_cape_history()   # 真实 CAPE 历史
-
-    # 成立日期映射（用于幸存者偏差修正，缺失时跳过修正）
-    inception_map: dict[str, str] = {}
-    if "inception_date" in fund_list.columns:
-        for _, row in fund_list.iterrows():
-            d = row.get("inception_date")
-            if d and pd.notna(d):
-                inception_map[str(row["fund_code"])] = str(d)[:10]
-
-    if fund_nav.empty:
-        return {"error": "无基金净值数据，请先运行 python run.py"}
-
-    fund_nav["date"]  = pd.to_datetime(fund_nav["date"])
-    market_db["date"] = pd.to_datetime(market_db["date"])
-    if not macro_db.empty:
-        macro_db["date"] = pd.to_datetime(macro_db["date"])
-
-    # 获取完整 SP500 历史（包含 DB 没有的更早数据）
-    sp500_full = _fetch_sp500_full(market_db)
-
-    # 确定回测区间（需要宏观+市场数据双覆盖）
-    data_start = max(
-        fund_nav["date"].min() + pd.DateOffset(months=6),
-        macro_db["date"].min() + pd.DateOffset(months=12) if not macro_db.empty else pd.Timestamp("2022-01-01"),
-        sp500_full.index.min() + pd.DateOffset(months=1),
-    )
-    data_end = fund_nav["date"].max()
-
-    bt_start = pd.to_datetime(start_date) if start_date else data_start
-    bt_end   = pd.to_datetime(end_date)   if end_date   else data_end
-
-    rebalance_dates = pd.date_range(start=bt_start, end=bt_end, freq=rebalance_freq)
-    if len(rebalance_dates) < 4:
-        return {"error": f"回测区间过短（{len(rebalance_dates)} 个调仓日），至少需要 4 个月"}
-
-    # 净值表按基金预切片一次，供下方各调仓期的区间收益查找复用（避免整表反复过滤）
-    nav_by_code = _index_nav_by_code(fund_nav)
+    # 数据读取 + 回测窗口确定 + 预切片（IO 与窗口逻辑隔离，便于阅读/测试）
+    prep = _prepare_backtest_data(start_date, end_date, rebalance_freq, cfg)
+    if "error" in prep:
+        return {"error": prep["error"]}
+    fund_nav        = prep["fund_nav"]
+    market_db       = prep["market_db"]
+    macro_db        = prep["macro_db"]
+    fund_list       = prep["fund_list"]
+    global_macro_db = prep["global_macro_db"]
+    cape_hist       = prep["cape_hist"]
+    sp500_full      = prep["sp500_full"]
+    nav_by_code     = prep["nav_by_code"]
+    inception_map   = prep["inception_map"]
+    rebalance_dates = prep["rebalance_dates"]
 
     records = []
     # 等权基准：全仓买入所有可用基金，不择时不择基，隔离"选基"vs"择时"贡献
@@ -216,55 +300,8 @@ def run_backtest(
         records.append(rec)
 
     df = pd.DataFrame(records).set_index("date")
-
-    # 累计净值序列（初始 = 1.0）
-    df["strat_cum"]  = (1 + df["strat_return"]).cumprod()
-    df["sp500_cum"]  = (1 + df["sp500_return"]).cumprod()
-    df["b6040_cum"]  = (1 + df["b6040_return"]).cumprod()
-    df["ewbh_cum"]   = (1 + df["ewbh_return"]).cumprod()
-
-    # 最大回撤序列（用于画图）
-    df["strat_dd"]  = _drawdown_series(df["strat_cum"])
-    df["sp500_dd"]  = _drawdown_series(df["sp500_cum"])
-
-    # 幸存者偏差修正指标（当 corrected_return 列存在时）
-    corrected_metrics = None
-    surv_stats: dict = {}
-    if "corrected_return" in df.columns:
-        corrected_metrics = calc_metrics(df["corrected_return"].dropna(), "幸存者修正策略")
-        if "premature_funds" in df.columns:
-            surv_stats = {
-                "periods_with_premature": int((df["premature_funds"] > 0).sum()),
-                "avg_premature_per_period": round(df["premature_funds"].mean(), 1),
-                "total_premature_instances": int(n_premature_total),
-            }
-
-    n_funds_with_inception = len(inception_map)
-    surv_note = (
-        f"基金池为当前在运作的 {len(fund_list)} 只核心QDII（其中 {n_funds_with_inception} 只有成立日期）"
-        f"，未含已清盘/改名基金；策略收益为乐观上界，非可复现实盘收益。"
-        + (f" 幸存者修正对照组基于成立日期过滤，"
-           f"平均每期剔除 {surv_stats.get('avg_premature_per_period', 0):.1f} 只未成立基金。"
-           if surv_stats else "")
-    )
-
-    return {
-        "df":                    df,
-        "strat_metrics":         calc_metrics(df["strat_return"],  "本策略（动态配置）"),
-        "sp500_metrics":         calc_metrics(df["sp500_return"],  "标普500（买入持有）"),
-        "b6040_metrics":         calc_metrics(df["b6040_return"],  "60/40 组合"),
-        "ewbh_metrics":          calc_metrics(df["ewbh_return"],   "等权基金买入持有"),
-        "corrected_strat_metrics": corrected_metrics,          # 幸存者偏差修正对照组
-        "survivorship_stats":    surv_stats,
-        "signal_stats":          _signal_accuracy(df),
-        "start_date":            rebalance_dates[0].strftime("%Y-%m-%d"),
-        "end_date":              rebalance_dates[-1].strftime("%Y-%m-%d"),
-        "n_periods":             len(df),
-        "fund_list":             fund_list,
-        "data_source":           _backtest_data_source(),
-        "factor_weights":        fw,
-        "survivorship_note":     surv_note,
-    }
+    return _finalize_backtest(df, fund_list, inception_map, n_premature_total,
+                              rebalance_dates, fw)
 
 
 def _backtest_data_source() -> str:

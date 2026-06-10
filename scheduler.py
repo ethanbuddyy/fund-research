@@ -70,9 +70,9 @@ def run_daily_update():
             logger.warning(f"[数据过期] {w}")
 
         try:
-            from src.reports.report_builder import build_report
-            report_path = build_report(signal, portfolio, scores_df=scores_df)
-            logger.info(f"[报告] 投研报告已生成：{report_path}")
+            from src.reports.html_report_builder import build_html_report
+            report_path = build_html_report(signal, portfolio, scores_df=scores_df)
+            logger.info(f"[报告] 投研报告已生成（HTML）：{report_path}")
         except Exception as e:
             logger.warning(f"[报告] 生成失败（不影响数据采集）：{e}")
 
