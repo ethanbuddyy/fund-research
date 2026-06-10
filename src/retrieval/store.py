@@ -62,6 +62,30 @@ def count_documents() -> int:
         conn.close()
 
 
+def document_version(doc_types: Optional[Iterable[str]] = None) -> tuple[str, int, int]:
+    """返回 `(数据库路径, 行数, 最大 rowid)`，供内存索引判断是否失效。"""
+    conn = get_connection()
+    try:
+        db_row = conn.execute("PRAGMA database_list").fetchone()
+        db_path = str(db_row[2]) if db_row else ""
+        if doc_types:
+            types = list(doc_types)
+            placeholders = ",".join("?" for _ in types)
+            row = conn.execute(
+                f"SELECT COUNT(*), COALESCE(MAX(rowid), 0) FROM documents "
+                f"WHERE doc_type IN ({placeholders})",
+                types,
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT COUNT(*), COALESCE(MAX(rowid), 0) FROM documents"
+            ).fetchone()
+        count, max_rowid = (int(row[0]), int(row[1])) if row else (0, 0)
+        return db_path, count, max_rowid
+    finally:
+        conn.close()
+
+
 def iter_documents(doc_types: Optional[Iterable[str]] = None) -> list[dict]:
     """读取语料。doc_types=None 取全部；否则按类型过滤。meta 解析回 dict。"""
     conn = get_connection()

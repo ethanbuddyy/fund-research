@@ -106,6 +106,7 @@ sector_etfs:
 # 数据源：东方财富 QDII 排行。抓取失败/禁用时自动回退到 fund_universe 核心池。
 fund_screener:
   enabled: true
+  index_only: true              # 仅保留指数基金/ETF/ETF联接，排除主动基金
   min_inception_years: 2.0     # 成立满 N 年
   require_3y_record: false     # 是否必须有近3年业绩
   max_purchase_fee: 0.015      # 申购费率上限(小数)，未知费率不一票否决
@@ -141,6 +142,10 @@ strategy_params:
 # ── 换仓阈值（防止因细微分差频繁调仓）──────────────────
 rebalancing:
   score_threshold: 10    # 新推荐基金须比当前持仓高出此分数才触发换仓建议
+
+# ── 组合基金类型约束 ───────────────────────────────────
+portfolio:
+  index_only: true       # 最终推荐严格仅使用指数基金；核心宽基，卫星行业/主题/区域指数
 
 # ── 用户个人化配置（可选）───────────────────────────────
 # 调整市场信号给出的仓位建议，使其符合个人风险偏好与投资期限。

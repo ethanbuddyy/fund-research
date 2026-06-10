@@ -12,6 +12,7 @@ requests>=2.31,<3
 PyYAML>=6.0,<7
 schedule>=1.2,<2
 python-dateutil>=2.8.2,<3
+xlrd>=2.0,<3             # Shiller CAPE 历史 .xls 文件解析
 anthropic>=0.105,<1
 openai>=2.0,<3          # DeepSeek / OpenAI backend（可选）
 json-repair>=0.30,<1    # DeepSeek 返回非法 JSON 时自动修复（可选）

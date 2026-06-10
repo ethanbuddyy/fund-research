@@ -148,12 +148,19 @@ def _key_conclusions(signal: Mapping[str, Any], portfolio: Mapping[str, Any]) ->
     core_pct = portfolio.get("core_allocation_pct", 60)
     sat_pct = portfolio.get("satellite_allocation_pct", 30)
     cash_pct = portfolio.get("cash_allocation_pct", 10)
+    allocation_shortfall = float(portfolio.get("allocation_shortfall_pct", 0) or 0)
     n_core = len(portfolio.get("core_funds", []))
     n_sat = len(portfolio.get("satellite_funds", []))
     vix_str = f"VIX {_num(vix, '.1f')}" if vix else ""
+    shortfall_note = (
+        f"目标风险仓位中有 {allocation_shortfall:.0f}% 因无合格标的转为现金，"
+        "不应解读为主动择时判断。"
+        if allocation_shortfall > 0 else ""
+    )
     conclusions.append(
-        f"建议持仓：核心 {core_pct:.0f}%（{n_core} 只宽基）+ 卫星 {sat_pct:.0f}%（{n_sat} 只行业/主动）+ 现金 {cash_pct:.0f}%。"
-        + (f"情绪面 {vix_str} 处于中性区间，当前仓位合理。" if vix_neutral(vix) else
+        f"建议持仓：核心 {core_pct:.0f}%（{n_core} 只宽基指数）+ 卫星 {sat_pct:.0f}%（{n_sat} 只行业/主题指数）+ 现金 {cash_pct:.0f}%。"
+        + shortfall_note
+        + (f"情绪面 {vix_str} 处于中性区间，当前仓位合理。" if vix_neutral(vix) and not shortfall_note else
            f"{vix_str} 偏高，卫星仓位已相应收缩。" if vix_elevated(vix) else "")
     )
 
@@ -201,6 +208,17 @@ def alloc_logic_text(signal: Mapping[str, Any]) -> str:
         "谨慎防守": f"综合评分 {_num(raw, '.2f')}/10 在 3.0–5.0 区间，降低风险敞口，提高现金",
         "减仓防守": f"综合评分 {_num(raw, '.2f')}/10 < 3.0，大幅减仓，保留流动性应对下行风险",
     }.get(composite, f"综合评分 {_num(raw, '.2f')}/10")
+
+
+def allocation_shortfall_note(portfolio: Mapping[str, Any]) -> str:
+    """实际风险仓位不足时明确说明原因，避免把被动空仓误读为择时结论。"""
+    shortfall = float(portfolio.get("allocation_shortfall_pct", 0) or 0)
+    if shortfall <= 0:
+        return ""
+    return (
+        f"目标风险仓位中有 {shortfall:.0f}% 因无合格标的未能配置，"
+        "该部分已转为现金，不代表主动看空。"
+    )
 
 
 def region_exposure(all_funds: list) -> dict[str, list[str]]:
@@ -297,6 +315,118 @@ class ReportModel:
     canonical_triggers: list[str]
     headline_triggers: list[str]
     rebalance_change: str
+
+
+@dataclass
+class BacktestView:
+    """回测章节的共享展示数据，避免两个渲染器重复解释业务字段。"""
+    strategy: Mapping[str, Any]
+    equal_weight: Mapping[str, Any]
+    sp500: Mapping[str, Any]
+    balanced_6040: Mapping[str, Any]
+    data_source_label: str
+    start: Any
+    end: Any
+    n_periods: Any
+    alpha_equal_weight: float
+    alpha_sp500: float
+    signal_rows: list[tuple[str, Any, Any, str]]
+    corrected: Optional[Mapping[str, Any]]
+    survivorship_bias: Optional[float]
+    avg_premature_per_period: float
+    factor_rows: list[Mapping[str, Any]]
+    factor_base_annual_return: float
+    survivorship_note: str
+
+
+def _signal_effectiveness(signal_name: str, next_month_return: Any) -> str:
+    """统一信号有效性判定，并正确处理 0 收益与非法值。"""
+    try:
+        value = float(next_month_return)
+    except (TypeError, ValueError):
+        return "—"
+    if signal_name == "重仓进取":
+        return "✓ 有效" if value > 1.5 else "△ 弱" if value > 0 else "✗ 失效"
+    if signal_name in ("谨慎防守", "减仓防守"):
+        return "✓ 有效" if value < 0.5 else "△ 弱"
+    return "—"
+
+
+def build_backtest_view(backtest: Mapping[str, Any]) -> BacktestView:
+    """把回测原始结果归一化成 MD/HTML 共用的纯展示模型。"""
+    strategy = backtest.get("strat_metrics", {}) or {}
+    equal_weight = backtest.get("ewbh_metrics", {}) or {}
+    sp500 = backtest.get("sp500_metrics", {}) or {}
+    balanced_6040 = backtest.get("b6040_metrics", {}) or {}
+
+    signal_rows: list[tuple[str, Any, Any, str]] = []
+    signal_stats = backtest.get("signal_stats")
+    if signal_stats is not None and not (
+        hasattr(signal_stats, "empty") and signal_stats.empty
+    ):
+        try:
+            for _, row in signal_stats.iterrows():
+                name = str(row.get("信号", ""))
+                count = row.get("出现次数", "—")
+                next_return = row.get("SP500次月均收益%", None)
+                signal_rows.append(
+                    (name, count, next_return, _signal_effectiveness(name, next_return))
+                )
+        except (AttributeError, TypeError, ValueError):
+            signal_rows = []
+
+    corrected = backtest.get("corrected_strat_metrics")
+    survivorship_bias = None
+    if corrected:
+        survivorship_bias = (
+            float(strategy.get("annualized_return", 0) or 0)
+            - float(corrected.get("annualized_return", 0) or 0)
+        )
+
+    factor_attribution = backtest.get("factor_attribution") or {}
+    factors = factor_attribution.get("factors") or {}
+    factor_rows = sorted(
+        (item for item in factors.values() if isinstance(item, Mapping)),
+        key=lambda item: -float(item.get("contribution_pct", 0) or 0),
+    )
+
+    data_source = backtest.get("data_source", "unknown")
+    return BacktestView(
+        strategy=strategy,
+        equal_weight=equal_weight,
+        sp500=sp500,
+        balanced_6040=balanced_6040,
+        data_source_label={
+            "real": "✅ 真实数据",
+            "partial": "⚠️ 部分真实/近似",
+            "mock": "❌ 含模拟数据(仅演示)",
+        }.get(data_source, str(data_source)),
+        start=backtest.get("start_date", "—"),
+        end=backtest.get("end_date", "—"),
+        n_periods=backtest.get("n_periods", "—"),
+        alpha_equal_weight=(
+            float(strategy.get("annualized_return", 0) or 0)
+            - float(equal_weight.get("annualized_return", 0) or 0)
+        ),
+        alpha_sp500=(
+            float(strategy.get("annualized_return", 0) or 0)
+            - float(sp500.get("annualized_return", 0) or 0)
+        ),
+        signal_rows=signal_rows,
+        corrected=corrected,
+        survivorship_bias=survivorship_bias,
+        avg_premature_per_period=float(
+            (backtest.get("survivorship_stats") or {}).get(
+                "avg_premature_per_period", 0
+            )
+            or 0
+        ),
+        factor_rows=factor_rows,
+        factor_base_annual_return=float(
+            factor_attribution.get("base_annual_return", 0) or 0
+        ),
+        survivorship_note=str(backtest.get("survivorship_note", "") or ""),
+    )
 
 
 def build_report_model(

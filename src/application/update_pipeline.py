@@ -79,7 +79,7 @@ def run_update(logger=None) -> tuple[MarketSignal, Any, PortfolioRecommendation]
     from src.recommender.portfolio import build_portfolio_recommendation
     from src.utils.config import load_config
     from src.utils.portfolio_state_store import (
-        load_previous_portfolio, save_current_portfolio,
+        load_previous_portfolio, commit_runtime_state,
     )
 
     # ── 状态所有权（阶段1）：本期决策开始前，只读取一次上期组合快照 ──
@@ -129,7 +129,8 @@ def run_update(logger=None) -> tuple[MarketSignal, Any, PortfolioRecommendation]
     save_market_signal(signal)
     snapshot_payload = portfolio.get("snapshot_payload")
     if snapshot_payload:
-        save_current_portfolio(snapshot_payload)
+        nav_state = stop_loss_info.get("next_nav_state") if stop_loss_info else None
+        commit_runtime_state(snapshot_payload, nav_state)
 
     # ── 语料沉淀：把本次「用完即弃」叙事 + 历史报告收编进检索库（fail-soft）──
     try:

@@ -200,3 +200,68 @@ class TestSelectPortfolioPure:
         # 上期核心 513500 应被保留
         core_codes = {f["fund_code"] for f in out["core_funds"]}
         assert "513500" in core_codes
+
+    def test_multiple_candidates_can_replace_multiple_incumbents(self):
+        from src.recommender.portfolio import _select_funds
+
+        pool = pd.DataFrame([
+            {"fund_code": "C", "fund_name": "C", "fund_type": "指数", "total_score": 70.0},
+            {"fund_code": "D", "fund_name": "D", "fund_type": "指数", "total_score": 65.0},
+            {"fund_code": "A", "fund_name": "A", "fund_type": "指数", "total_score": 50.0},
+            {"fund_code": "B", "fund_name": "B", "fund_type": "指数", "total_score": 40.0},
+        ])
+
+        picks = _select_funds(
+            pool, 0.60, max_n=2,
+            prev_scores={"A": 50.0, "B": 40.0},
+            score_threshold=10.0, role="核心",
+        )
+        assert [p["fund_code"] for p in picks] == ["C", "D"]
+
+    def test_no_eligible_funds_moves_unallocated_target_to_cash(self):
+        from src.recommender.portfolio import select_portfolio
+
+        scores = pd.DataFrame([{
+            "fund_code": "ACTIVE", "fund_name": "全球主动精选", "total_score": 99.0,
+        }])
+        funds = pd.DataFrame([{
+            "fund_code": "ACTIVE", "fund_name": "全球主动精选",
+            "fund_type": "主动QDII", "expense_ratio": 0.01,
+        }])
+
+        out = select_portfolio(scores, funds, self._signal(), None, _SELECT_CFG)
+        assert out["core_funds"] == []
+        assert out["satellite_funds"] == []
+        assert out["total_invested_pct"] == 0
+        assert out["cash_allocation_pct"] == 100
+        assert out["allocation_shortfall_pct"] == 90
+
+    def test_active_fund_is_excluded_even_when_highest_scoring(self):
+        """主动基金即使得分最高，也不能进入推荐或备选榜。"""
+        from src.recommender.portfolio import select_portfolio
+
+        scores = pd.concat([
+            pd.DataFrame([{
+                "fund_code": "270023", "fund_name": "广发全球精选",
+                "total_score": 99.0, "signal": "买入",
+                "performance_score": 10.0, "risk_score": 10.0,
+                "strategy_score": 10.0, "consistency_score": 10.0,
+                "cost_score": 10.0,
+            }]),
+            _scores_df(),
+        ], ignore_index=True)
+        funds = pd.concat([
+            pd.DataFrame([{
+                "fund_code": "270023", "fund_name": "广发全球精选",
+                "fund_type": "主动QDII", "expense_ratio": 0.014,
+            }]),
+            _funds_df(),
+        ], ignore_index=True)
+
+        out = select_portfolio(scores, funds, self._signal(), None, _SELECT_CFG)
+        all_codes = {
+            f["fund_code"]
+            for f in out["core_funds"] + out["satellite_funds"] + out["top_picks"]
+        }
+        assert "270023" not in all_codes
+        assert out["index_only"] is True

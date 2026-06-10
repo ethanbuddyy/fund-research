@@ -12,7 +12,7 @@ from pathlib import Path
 
 from src.domain.scoring import POSITION_TIERS, tier_allocation_str
 from src.reports.report_model import (
-    build_report_model, ReportModel, signal_threshold_rows,
+    build_backtest_view, build_report_model, ReportModel, signal_threshold_rows,
 )
 from tests.test_report_builder import _signal, _portfolio
 
@@ -60,6 +60,46 @@ class TestBuildReportModel:
                             lambda *a, **k: (_ for _ in ()).throw(AssertionError("DB touched")))
         _sig, _p, m = _model()
         assert m.key_conclusions
+
+    def test_allocation_shortfall_is_disclosed(self):
+        sig = _signal()
+        p = _portfolio(
+            core_allocation_pct=0,
+            satellite_allocation_pct=0,
+            cash_allocation_pct=100,
+            allocation_shortfall_pct=90,
+            core_funds=[],
+            satellite_funds=[],
+        )
+        prov = {"data": {}, "overall_mode": "real", "stale_warnings": []}
+        model = build_report_model(
+            sig, p, None, None, None, prov,
+            {"scoring_weights": {}, "strategy_params": {}},
+        )
+        assert any("无合格标的" in conclusion for conclusion in model.key_conclusions)
+
+
+def test_backtest_view_handles_zero_return_and_sorts_factors():
+    import pandas as pd
+
+    view = build_backtest_view({
+        "strat_metrics": {"annualized_return": 8},
+        "ewbh_metrics": {"annualized_return": 5},
+        "sp500_metrics": {"annualized_return": 6},
+        "signal_stats": pd.DataFrame([{
+            "信号": "重仓进取", "出现次数": 2, "SP500次月均收益%": 0,
+        }]),
+        "factor_attribution": {
+            "base_annual_return": 8,
+            "factors": {
+                "low": {"label": "低", "contribution_pct": -1},
+                "high": {"label": "高", "contribution_pct": 2},
+            },
+        },
+    })
+    assert view.alpha_equal_weight == 3
+    assert view.signal_rows[0][3] == "✗ 失效"
+    assert [row["label"] for row in view.factor_rows] == ["高", "低"]
 
 
 # ────────────────────────────────────────────────────────────────────

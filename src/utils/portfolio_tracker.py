@@ -7,7 +7,7 @@
 状态读写统一走 portfolio_state_store（唯一真相源），本模块不再自行拼接路径：
   上期快照由编排层显式传入（previous_portfolio），净值/高水位经 store 读写。
 """
-from .portfolio_state_store import load_nav_state, save_nav_state, load_previous_portfolio
+from .portfolio_state_store import load_nav_state, load_previous_portfolio
 from ..domain.types import StopLossResult
 
 
@@ -76,8 +76,6 @@ def update_and_check(stop_loss_pct: float = 0.15,
     new_hwm = max(nav_data["hwm"], new_nav)
     drawdown = (new_nav / new_hwm - 1.0) * 100.0 if new_hwm > 0 else 0.0
 
-    save_nav_state(new_nav, new_hwm)
-
     triggered = drawdown < threshold
     note = (
         f"组合净值 {new_nav:.2f}（高水位 {new_hwm:.2f}），"
@@ -97,6 +95,7 @@ def update_and_check(stop_loss_pct: float = 0.15,
         "period_return_pct": round(weighted_return * 100, 2),
         "funds_tracked": len(fund_returns),
         "note": note,
+        "next_nav_state": {"nav": round(new_nav, 6), "hwm": round(new_hwm, 6)},
     }
 
 

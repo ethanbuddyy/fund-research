@@ -32,9 +32,9 @@ from .report_editor import canonical_triggers, headline_triggers, dedupe_keep_or
 from .report_model import (
     _num, _score, _pct,
     _key_conclusions, primary_contradiction, market_narrative, alloc_logic_text,
-    region_exposure, review_findings, _snapshot_change_note,
+    allocation_shortfall_note, region_exposure, review_findings, _snapshot_change_note,
     _VERDICT_LABEL, _CATEGORY_CN, signal_threshold_rows,
-    ReportModel, build_report_model,
+    ReportModel, build_report_model, build_backtest_view,
 )
 
 
@@ -364,6 +364,8 @@ def _layer1_decision(signal: Mapping[str, Any], portfolio: Mapping[str, Any], ov
     conc_md = "\n".join(f"{i+1}. {c}" for i, c in enumerate(conclusions))
     heads = headline_triggers(signal, portfolio, 1)
     n_all = len(canonical_triggers(signal, portfolio))
+    shortfall = allocation_shortfall_note(portfolio)
+    shortfall_block = f"\n> ⚠️ {shortfall}\n" if shortfall else ""
     if heads:
         more = f"\n\n_另有 {n_all - 1} 条触发条件，完整见「四、何时改变」。_" if n_all > 1 else ""
         heads_md = "\n".join(f"- {t}" for t in heads) + more
@@ -385,6 +387,7 @@ def _layer1_decision(signal: Mapping[str, Any], portfolio: Mapping[str, Any], ov
 | 综合评分 | {_num(raw, '.2f')} / 10 |
 | 建议仓位 | 核心 {core_pct:.0f}% / 卫星 {sat_pct:.0f}% / 现金 {cash_pct:.0f}% |
 | 置信度 | {conf} |
+{shortfall_block}
 
 **较上期：**
 {snapshot}
@@ -450,7 +453,7 @@ _各情景的具体加减仓操作见「四、何时改变」。_
 | 类别 | 比例 | 说明 |
 |---|---|---|
 | 核心（宽基指数） | {core_pct:.0f}% | 稳健底仓，低成本被动跟踪 |
-| 卫星（行业/主动） | {sat_pct:.0f}% | 增强收益，适度集中敞口 |
+| 卫星（行业/主题指数） | {sat_pct:.0f}% | 增强收益，适度集中敞口 |
 | 现金 | {cash_pct:.0f}% | 防守缓冲，等待更优时机 |
 | **合计投资比例** | **{core_pct + sat_pct:.0f}%** | 信号：{composite} |
 {thesis_block}
@@ -822,22 +825,16 @@ def _s9_backtest(backtest: Optional[Mapping[str, Any]], signal: Mapping[str, Any
     if "error" in backtest:
         return f"## 九、回测与策略验证\n\n> ⚠️ 回测失败：{backtest['error']}"
 
-    sm = backtest.get("strat_metrics", {})
-    ewbh = backtest.get("ewbh_metrics", {})
-    spm = backtest.get("sp500_metrics", {})
-    b6040 = backtest.get("b6040_metrics", {})
+    view = build_backtest_view(backtest)
+    sm = view.strategy
+    ewbh = view.equal_weight
+    spm = view.sp500
+    b6040 = view.balanced_6040
     df = backtest.get("df")
-    sig_stats = backtest.get("signal_stats")
-    ds = backtest.get("data_source", "unknown")
-    ds_label = {"real": "✅ 真实数据", "partial": "⚠️ 部分真实/近似", "mock": "❌ 含模拟数据(仅演示)"}.get(ds, ds)
-    surv = backtest.get("survivorship_note", "")
-
-    start = backtest.get("start_date", "—")
-    end = backtest.get("end_date", "—")
-    n_periods = backtest.get("n_periods", "—")
-
-    alpha_ewbh = (sm.get("annualized_return", 0) or 0) - (ewbh.get("annualized_return", 0) or 0)
-    alpha_sp500 = (sm.get("annualized_return", 0) or 0) - (spm.get("annualized_return", 0) or 0)
+    ds_label = view.data_source_label
+    start = view.start
+    end = view.end
+    n_periods = view.n_periods
 
     perf_table = f"""### 绩效对比（{start} ～ {end}，{n_periods} 个调仓周期）
 
@@ -850,28 +847,18 @@ def _s9_backtest(backtest: Optional[Mapping[str, Any]], signal: Mapping[str, Any
 | 年化波动率 | {_pct(sm.get('volatility'), 2)} | {_pct(ewbh.get('volatility'), 2)} | {_pct(spm.get('volatility'), 2)} | {_pct(b6040.get('volatility'), 2)} |
 | 月度胜率 | {_pct(sm.get('win_rate'), 1)} | {_pct(ewbh.get('win_rate'), 1)} | {_pct(spm.get('win_rate'), 1)} | {_pct(b6040.get('win_rate'), 1)} |
 
-**超额收益 vs 等权买持：{_pct(alpha_ewbh, 2)}/年**（衡量择时+选基综合贡献）
+**超额收益 vs 等权买持：{_pct(view.alpha_equal_weight, 2)}/年**（衡量择时+选基综合贡献）
 
-**超额收益 vs 标普500：{_pct(alpha_sp500, 2)}/年**"""
+**超额收益 vs 标普500：{_pct(view.alpha_sp500, 2)}/年**"""
 
     # 信号有效性
     sig_md = ""
-    if sig_stats is not None and not (hasattr(sig_stats, "empty") and sig_stats.empty):
+    if view.signal_rows:
         sig_rows = ["### 信号有效性验证", "", "| 信号 | 出现次数 | SP500次月均收益 | 有效性 |", "|---|---|---|---|"]
-        try:
-            for _, row in sig_stats.iterrows():
-                s = str(row.get("信号", ""))
-                n = row.get("出现次数", "—")
-                sp_r = row.get("SP500次月均收益%", None)
-                if s == "重仓进取":
-                    ok = "✓ 有效" if sp_r and float(sp_r) > 1.5 else "△ 弱" if sp_r and float(sp_r) > 0 else "✗ 失效"
-                elif s in ("谨慎防守", "减仓防守"):
-                    ok = "✓ 有效" if sp_r and float(sp_r) < 0.5 else "△ 弱"
-                else:
-                    ok = "—"
-                sig_rows.append(f"| {s} | {n} | {_pct(sp_r, 2)} | {ok} |")
-        except Exception:
-            sig_rows.append("| 数据解析失败 | — | — | — |")
+        for signal_name, count, next_return, effectiveness in view.signal_rows:
+            sig_rows.append(
+                f"| {signal_name} | {count} | {_pct(next_return, 2)} | {effectiveness} |"
+            )
         sig_md = "\n".join(sig_rows)
 
     # 年度收益
@@ -893,15 +880,17 @@ def _s9_backtest(backtest: Optional[Mapping[str, Any]], signal: Mapping[str, Any
         except Exception:
             annual_md = ""
 
-    surv_note = f"\n> ⚠️ **幸存者偏差**：{surv}" if surv else ""
+    surv_note = (
+        f"\n> ⚠️ **幸存者偏差**：{view.survivorship_note}"
+        if view.survivorship_note else ""
+    )
 
     # ── 幸存者偏差修正对照组 ──────────────────────────────────────
     surv_corr_md = ""
-    corrected = backtest.get("corrected_strat_metrics")
-    surv_stats = backtest.get("survivorship_stats", {})
+    corrected = view.corrected
     if corrected:
-        bias = (sm.get("annualized_return", 0) or 0) - (corrected.get("annualized_return", 0) or 0)
-        avg_premature = surv_stats.get("avg_premature_per_period", 0)
+        bias = view.survivorship_bias or 0
+        avg_premature = view.avg_premature_per_period
         surv_corr_md = f"""### 幸存者偏差修正对照
 
 > 修正方法：在每个调仓日仅允许使用**成立日期 ≤ 调仓日**的基金参与评分选股，
@@ -918,21 +907,17 @@ def _s9_backtest(backtest: Optional[Mapping[str, Any]], signal: Mapping[str, Any
 
     # ── 因子归因分析（如随 run.py --backtest 一同返回则展示）──────
     factor_attr_md = ""
-    attr = backtest.get("factor_attribution")
-    if attr and "factors" in attr:
-        base_ann = attr.get("base_annual_return", 0)
+    if view.factor_rows:
         rows = [
             "### 因子归因分析（逐因子屏蔽实验）",
             "",
-            f"> 基准策略（6因子全开）年化收益：**{_pct(base_ann, 2)}**",
+            f"> 基准策略（6因子全开）年化收益：**{_pct(view.factor_base_annual_return, 2)}**",
             "> 贡献 = 基准年化 − 屏蔽后年化（正值：该因子有益；负值：该因子拖累）",
             "",
             "| 因子 | 原权重 | 屏蔽后年化 | 边际贡献 | 评级 |",
             "|---|---|---|---|---|",
         ]
-        for fname, info in sorted(
-            attr["factors"].items(), key=lambda x: -x[1]["contribution_pct"]
-        ):
+        for info in view.factor_rows:
             rows.append(
                 f"| {info['label']} "
                 f"| {info['base_weight']*100:.1f}% "

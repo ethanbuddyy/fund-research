@@ -68,6 +68,55 @@ CUSTODY_FEE_BY_CODE   = {f["fund_code"]: f["custody_fee"]   for f in CORE_QDII_F
 ASSET_CLASS_BY_CODE = {f["fund_code"]: f["asset_class"] for f in CORE_QDII_FUNDS}
 BENCHMARK_BY_CODE   = {f["fund_code"]: f["benchmark"]   for f in CORE_QDII_FUNDS}
 REGION_BY_CODE      = {f["fund_code"]: f["region"]      for f in CORE_QDII_FUNDS}
+FUND_TYPE_BY_CODE   = {f["fund_code"]: f["fund_type"]   for f in CORE_QDII_FUNDS}
+
+
+_INDEX_TYPES = ("ETF", "ETF联接", "被动指数", "增强指数", "指数基金")
+_INDEX_NAME_MARKERS = (
+    "ETF", "联接", "指数", "标普", "纳斯达克", "纳指", "日经", "DAX",
+    "恒生", "MSCI", "中证", "沪深", "富时", "道琼斯",
+)
+_ACTIVE_NAME_MARKERS = ("主动", "精选", "优选", "产业升级", "全球成长", "股票发起式")
+
+
+def is_index_fund(
+    fund_code: str = "",
+    fund_type: str = "",
+    fund_name: str = "",
+    benchmark: str = "",
+) -> bool:
+    """统一判断基金是否为指数化产品。
+
+    核心标的库中的明确类型优先级最高；动态基金池缺少结构化类型时，再使用名称和
+    基准关键词兜底。LOF 只是交易结构，不天然等于指数基金，因此必须同时命中指数
+    标识才放行。
+    """
+    code = str(fund_code or "")
+    known_type = str(FUND_TYPE_BY_CODE.get(code) or "")
+    if known_type:
+        if "主动" in known_type:
+            return False
+        if known_type == "LOF" and any(
+            marker in str(fund_name or "") for marker in _ACTIVE_NAME_MARKERS
+        ):
+            return False
+        return any(marker in known_type for marker in _INDEX_TYPES) or (
+            known_type == "LOF"
+            and any(marker in f"{fund_name} {benchmark}" for marker in _INDEX_NAME_MARKERS)
+        )
+
+    type_text = str(fund_type or "")
+    name_text = str(fund_name or "")
+    benchmark_text = str(benchmark or "")
+    text = f"{type_text} {name_text} {benchmark_text}"
+
+    if "主动" in type_text:
+        return False
+    if any(marker in type_text for marker in _INDEX_TYPES):
+        return True
+    if any(marker in name_text for marker in _ACTIVE_NAME_MARKERS):
+        return False
+    return any(marker in text for marker in _INDEX_NAME_MARKERS)
 
 
 # ── 按名称客观推断基准/地区（供 fund_screener 对全市场 QDII 分类去重）──

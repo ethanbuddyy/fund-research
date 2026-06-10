@@ -15,7 +15,8 @@ from typing import Optional
 import re
 from datetime import datetime
 from ..utils.fund_universe import (
-    infer_benchmark, infer_region, classify_asset_class, EXPENSE_RATIO_BY_CODE,
+    infer_benchmark, infer_region, classify_asset_class, is_index_fund,
+    EXPENSE_RATIO_BY_CODE,
 )
 
 _RANK_URL = "https://fund.eastmoney.com/data/rankhandler.aspx"
@@ -37,6 +38,7 @@ _DEFAULTS = {
     "max_pool_size": 30,
     "rank_by": "return_3y",      # return_1y / return_3y / return_since（3年更可比，不偏袒老基金）
     "min_aum_yi": 0,             # 规模下限(亿)，>0 时需 pingzhongdata 富集
+    "index_only": True,           # 仅保留指数化产品，规避主动基金风格漂移
 }
 
 
@@ -131,7 +133,7 @@ def _pct_to_float(s):
 # ── 纯规则核心（离线可测）──────────────────────────────
 
 def apply_filters(cands: list, sc: dict, today) -> list:
-    """成立年限 + 业绩记录 + 费率 + 规模(可选) 过滤。"""
+    """指数类型 + 成立年限 + 业绩记录 + 费率 + 规模(可选) 过滤。"""
     min_years = sc.get("min_inception_years", 2.0)
     require_3y = sc.get("require_3y_record", False)
     max_fee = sc.get("max_purchase_fee", 0.015)
@@ -139,6 +141,13 @@ def apply_filters(cands: list, sc: dict, today) -> list:
 
     kept = []
     for c in cands:
+        if sc.get("index_only", True) and not is_index_fund(
+            fund_code=c.get("fund_code", ""),
+            fund_type=c.get("fund_type", ""),
+            fund_name=c.get("fund_name", ""),
+            benchmark=c.get("benchmark", ""),
+        ):
+            continue
         # 成立年限
         age = _age_years(c.get("inception_date"), today)
         if age is not None and age < min_years:
@@ -177,7 +186,9 @@ def classify_and_dedup(cands: list, sc: dict) -> list:
         benchmark = infer_benchmark(name)
         enriched.append({
             **c,
-            "fund_type": "QDII",
+            "fund_type": "指数QDII" if is_index_fund(
+                fund_code=c["fund_code"], fund_name=name, benchmark=benchmark
+            ) else "主动QDII",
             "benchmark": benchmark,
             "region": infer_region(name),
             "asset_class": classify_asset_class(fund_code=c["fund_code"], fund_name=name, benchmark=benchmark),

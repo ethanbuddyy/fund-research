@@ -92,6 +92,8 @@ def init_database():
         nav_date TEXT,
         total_assets REAL,
         benchmark TEXT,
+        mgmt_fee REAL,
+        custody_fee REAL,
         updated_at TEXT DEFAULT (datetime('now'))
     );
 
@@ -153,6 +155,8 @@ def init_database():
         cash_ratio REAL,
         stock_codes TEXT,
         managers TEXT,
+        turnover_rates TEXT,
+        region_breakdown TEXT,
         source TEXT,
         updated_at TEXT DEFAULT (datetime('now')),
         UNIQUE(fund_code, date)
